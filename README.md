@@ -21,6 +21,19 @@ Nunca versione o arquivo `.env` nem compartilhe o token real do BotFather.
 | `TELEGRAM_TOKEN` | Token do bot `@Dmarques_bot`, obtido via BotFather. |
 | `TELEGRAM_CHAT_ID` | ID do chat autorizado a interagir com o bot. |
 
+## Execução local
+
+Requisitos: Node.js 20 ou superior.
+
+```bash
+npm install
+cp .env.example .env
+npm run typecheck
+npm start
+```
+
+O bot usa **long polling** e restringe as mensagens ao `TELEGRAM_CHAT_ID` configurado. Os comandos iniciais são `/start` e `/help`. O encaminhamento de mensagens ao Hermes ainda está isolado como próxima etapa de implementação.
+
 ## Estado do projeto
 
-Funcionalidade em desenvolvimento. Detalhes de implementação, comandos suportados e instruções de execução serão adicionados conforme o gateway Hermes evoluir.
+A estrutura inicial do bot está implementada. Detalhes de integração com o Hermes, persistência e comandos adicionais serão adicionados conforme o gateway evoluir.
