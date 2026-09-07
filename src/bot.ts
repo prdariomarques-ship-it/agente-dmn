@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { Bot, Context } from "grammy";
+import { isAllowedChat } from "./access.js";
 
 const token = process.env.TELEGRAM_TOKEN;
 const allowedChatId = process.env.TELEGRAM_CHAT_ID;
@@ -11,8 +12,7 @@ if (!token) {
 const bot = new Bot(token);
 
 function isAllowed(ctx: Context): boolean {
-  if (!allowedChatId) return true;
-  return String(ctx.chat?.id) === allowedChatId;
+  return isAllowedChat(ctx.chat?.id, allowedChatId);
 }
 
 bot.use(async (ctx, next) => {
