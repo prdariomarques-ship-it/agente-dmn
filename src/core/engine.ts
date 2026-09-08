@@ -41,6 +41,9 @@ export class TaskEngine {
   private maxIterations = 10;
   private observers: EngineObserver[] = [];
 
+  // Track active in-memory loops to prevent concurrent loop spawning
+  private activeLoops: Set<string> = new Set();
+
   constructor(store?: TaskStore & ExecutionStore, config?: { maxIterations?: number }) {
     const inMem = new InMemoryTaskStore();
     this.taskStore = store || inMem;
@@ -107,10 +110,13 @@ export class TaskEngine {
       task.status = "RUNNING";
       this.taskStore.saveTask(task);
 
-      const execs = this.execStore.getByTaskId(taskId);
-      let execution = execs.length > 0 ? execs[0] : null;
-      if (execution && execution.state !== "DONE" && execution.state !== "ERROR") {
-         this.runExecutionLoop(task, execution, 30000);
+      // If the loop isn't already active in this process (e.g. we restarted), spawn it
+      if (!this.activeLoops.has(taskId)) {
+        const execs = this.execStore.getByTaskId(taskId);
+        let execution = execs.length > 0 ? execs[0] : null;
+        if (execution && execution.state !== "DONE" && execution.state !== "ERROR") {
+           this.runExecutionLoop(task, execution, 30000);
+        }
       }
     }
   }
@@ -127,7 +133,6 @@ export class TaskEngine {
     }
   }
 
-  // Idempotent recovery triggered typically on system startup to find abandoned tasks
   async recoverAndResume(taskId: string, timeoutMs: number = 30000): Promise<Task> {
     const task = this.taskStore.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
@@ -136,11 +141,9 @@ export class TaskEngine {
     }
 
     if (task.status === "PAUSED") {
-      // Do NOT blindly change to RUNNING. A human must call resumeTask()
       return task;
     }
 
-    // Recovering from crash (was RUNNING, PENDING or QUEUED)
     task.status = "RUNNING";
     this.taskStore.saveTask(task);
 
@@ -209,6 +212,13 @@ export class TaskEngine {
     const agent = this.agents.get(execution.agentId);
     if (!agent) throw new Error(`Agent with id ${execution.agentId} not found for recovery`);
 
+    if (this.activeLoops.has(task.id)) {
+      // Prevent concurrent loop execution in the same process
+      return task;
+    }
+
+    this.activeLoops.add(task.id);
+
     return new Promise((resolve) => {
       let isTimeout = false;
       let timeoutId: NodeJS.Timeout | null = null;
@@ -220,6 +230,7 @@ export class TaskEngine {
         timeoutId = setTimeout(() => {
           isTimeout = true;
           this.failTask(task, execution, "Task execution timed out");
+          this.activeLoops.delete(task.id);
           resolve(task);
         }, timeoutMs - totalRunningTime);
       };
@@ -232,6 +243,7 @@ export class TaskEngine {
              const result = await agent.execute(task);
              this.completeTask(task, execution, result);
              if (timeoutId) clearTimeout(timeoutId);
+             this.activeLoops.delete(task.id);
              return resolve(task);
           }
 
@@ -265,16 +277,13 @@ export class TaskEngine {
 
             const loopStartTime = Date.now();
 
-            // Checkpoint awareness: Resume exactly from where we left off
             const lastState = execution.state;
 
-            // If we are recovering and the last state was OBSERVE, we jump straight to THINK
             if (lastState === "OBSERVE") {
-               // Jump to think
+               // Resume from think
             } else if (lastState === "THINK") {
-               // Jump to act
+               // Resume from act
             } else {
-               // Normal iteration start
                execution.iterations++;
                this.recordStep(execution, "OBSERVE");
                if (agent.observe) {
@@ -284,7 +293,7 @@ export class TaskEngine {
                }
             }
 
-            if (lastState !== "THINK" && task.status === "RUNNING") {
+            if (lastState !== "THINK" && task.status === "RUNNING" && execution.state !== "ERROR") {
               this.recordStep(execution, "THINK");
               if (agent.think) {
                 const thinkOutput = await agent.think(task, execution);
@@ -294,7 +303,7 @@ export class TaskEngine {
             }
 
             let isDone = false;
-            if (task.status === "RUNNING") {
+            if (task.status === "RUNNING" && execution.state !== "ERROR") {
               this.recordStep(execution, "ACT");
               if (agent.act) {
                  const actOutput = await agent.act(task, execution);
@@ -323,12 +332,14 @@ export class TaskEngine {
           }
 
           if (timeoutId) clearTimeout(timeoutId);
+          this.activeLoops.delete(task.id);
           resolve(task);
 
         } catch (error) {
           if (!isTimeout) {
             this.failTask(task, execution, error instanceof Error ? error.message : String(error));
             if (timeoutId) clearTimeout(timeoutId);
+            this.activeLoops.delete(task.id);
             resolve(task);
           }
         }

@@ -60,12 +60,22 @@ describe("Persistent Agent Execution", () => {
     expect(execs.length).toBeGreaterThan(0);
 
     // 4. Resume via Engine B
+    // Instead of directly calling recoverAndResume while PAUSED, a human triggers resumeTask()
     engineB.resumeTask(task.id);
-    const execPromiseB = engineB.recoverAndResume(task.id);
+    // Because resumeTask() spawns the runExecutionLoop independently now, we must poll for completion
 
-    const finishedTask = await execPromiseB;
-    expect(finishedTask.status).toBe("COMPLETED");
-    expect(finishedTask.result).toBe("Recovered Successfully");
+    await new Promise<void>((resolve) => {
+      const check = setInterval(() => {
+        if (storeB.getTask(task.id)?.status === "COMPLETED") {
+          clearInterval(check);
+          resolve();
+        }
+      }, 5);
+    });
+
+    const finishedTask = storeB.getTask(task.id);
+    expect(finishedTask?.status).toBe("COMPLETED");
+    expect(finishedTask?.result).toBe("Recovered Successfully");
 
     storeB.close();
   });
@@ -104,7 +114,6 @@ describe("Persistent Agent Execution", () => {
     };
     engineB.registerAgent(agentB);
 
-    engineB.resumeTask(task.id);
     const execPromiseB = engineB.recoverAndResume(task.id);
     const finishedTask = await execPromiseB;
 

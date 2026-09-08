@@ -14,7 +14,7 @@ Persistence                ✓            ✓              ?            ✓     
 Recovery                   ✓            ✓              ?            ✓           ✓
 Memory                     ✓            ✓              ?            ?           ✓
 Context                    ✓            ?              ?            ?           ?
-Model                      ✓            parcial        ?            N/A         ?
+Model                      ✓            ✓ (Router)     ?            N/A         ✓
 Tool                       ✓            parcial        ?            N/A         ✓
 MCP                        ✓            parcial        ?            N/A         ?
 Skills                     ✓            futuro         ?            N/A         —
