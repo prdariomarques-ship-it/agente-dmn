@@ -3,7 +3,8 @@ export type TaskStatus =
   | "RUNNING"
   | "COMPLETED"
   | "FAILED"
-  | "CANCELLED";
+  | "CANCELLED"
+  | "PAUSED"; // Added for Human-in-the-loop
 
 export type ExecutionState =
   | "IDLE"
@@ -11,7 +12,8 @@ export type ExecutionState =
   | "THINK"
   | "ACT"
   | "DONE"
-  | "ERROR";
+  | "ERROR"
+  | "WAITING_APPROVAL"; // Added for Human-in-the-loop
 
 export interface Task {
   id: string;
@@ -61,4 +63,16 @@ export interface TaskStore {
   get(id: string): Task | undefined;
   list(): Task[];
   delete(id: string): boolean;
+}
+
+// Added for Telemetry/UI streams
+export interface EngineEvent {
+  type: "TASK_CREATED" | "STATE_CHANGED" | "TASK_COMPLETED" | "TASK_FAILED" | "APPROVAL_REQUESTED";
+  taskId: string;
+  timestamp: Date;
+  payload: Record<string, any>;
+}
+
+export interface EngineObserver {
+  onEvent(event: EngineEvent): void;
 }
