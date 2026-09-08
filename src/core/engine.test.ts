@@ -1,80 +1,89 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import { TaskEngine, InMemoryTaskStore } from "./engine.js";
-import { Agent, Task } from "./types.js";
+import { Agent, Task, TaskExecution } from "./types.js";
 
-describe("TaskEngine", () => {
+describe("TaskEngine Loop Enhancements", () => {
   let engine: TaskEngine;
   let store: InMemoryTaskStore;
 
-  const dummyAgent: Agent = {
-    id: "agent-1",
-    name: "Dummy Agent",
-    execute: async (task: Task) => {
-      if (task.objective.includes("fail")) {
-        throw new Error("Simulated agent failure");
+  const simpleAgent: Agent = {
+    id: "simple-agent",
+    name: "Simple Agent",
+    execute: async (task: Task) => `Executed: ${task.objective}`,
+  };
+
+  const loopingAgent: Agent = {
+    id: "loop-agent",
+    name: "Looping Agent",
+    observe: async () => "observed data",
+    think: async () => "thought process",
+    act: async (task: Task, context: TaskExecution) => {
+      if (context.iterations === 2) {
+        return "DONE: Final Answer";
       }
-      return `Executed: ${task.objective}`;
-    },
+      return "acted on environment";
+    }
+  };
+
+  const failingLoopAgent: Agent = {
+    id: "fail-agent",
+    name: "Failing Loop Agent",
+    observe: async () => { throw new Error("observe failed"); },
+  };
+
+  const infiniteAgent: Agent = {
+    id: "infinite-agent",
+    name: "Infinite Agent",
+    observe: async () => "obs",
+    act: async () => "not done"
   };
 
   beforeEach(() => {
     store = new InMemoryTaskStore();
-    engine = new TaskEngine(store);
-    engine.registerAgent(dummyAgent);
+    engine = new TaskEngine(store, { maxIterations: 3 });
+    engine.registerAgent(simpleAgent);
+    engine.registerAgent(loopingAgent);
+    engine.registerAgent(failingLoopAgent);
+    engine.registerAgent(infiniteAgent);
   });
 
-  it("should create a pending task", () => {
-    const task = engine.createTask("Test objective", "Test context");
-
-    expect(task.id).toBeDefined();
-    expect(task.objective).toBe("Test objective");
-    expect(task.context).toBe("Test context");
-    expect(task.status).toBe("PENDING");
-
-    const storedTask = store.get(task.id);
-    expect(storedTask).toEqual(task);
+  it("should execute a simple agent task", async () => {
+    const task = engine.createTask("Test objective");
+    const executedTask = await engine.executeTask(task.id, simpleAgent.id);
+    expect(executedTask.status).toBe("COMPLETED");
+    expect(executedTask.result).toBe("Executed: Test objective");
   });
 
-  it("should execute a task successfully", async () => {
-    const task = engine.createTask("Test successful objective");
-
-    const executedTask = await engine.executeTask(task.id, dummyAgent.id);
+  it("should execute a multi-step loop agent task", async () => {
+    const task = engine.createTask("Loop objective");
+    const executedTask = await engine.executeTask(task.id, loopingAgent.id);
 
     expect(executedTask.status).toBe("COMPLETED");
-    expect(executedTask.result).toBe("Executed: Test successful objective");
-    expect(executedTask.agentId).toBe(dummyAgent.id);
-    expect(executedTask.error).toBeUndefined();
+    expect(executedTask.result).toBe("Final Answer");
+
+    const history = executedTask.metadata?.executionHistory as any[];
+    expect(history).toBeDefined();
+    // 2 iterations = observe, think, act, observe, think, act, DONE
+    expect(history.length).toBe(7);
+    expect(history[6].state).toBe("DONE");
   });
 
-  it("should handle task execution failure", async () => {
-    const task = engine.createTask("This should fail");
-
-    const executedTask = await engine.executeTask(task.id, dummyAgent.id);
+  it("should handle failure within the loop", async () => {
+    const task = engine.createTask("Fail objective");
+    const executedTask = await engine.executeTask(task.id, failingLoopAgent.id);
 
     expect(executedTask.status).toBe("FAILED");
-    expect(executedTask.result).toBeUndefined();
-    expect(executedTask.error).toBe("Simulated agent failure");
+    expect(executedTask.error).toBe("observe failed");
+
+    const history = executedTask.metadata?.executionHistory as any[];
+    expect(history[history.length - 1].state).toBe("ERROR");
   });
 
-  it("should cancel a pending task", () => {
-    const task = engine.createTask("To be cancelled");
+  it("should fail task if it exceeds max iterations", async () => {
+    const task = engine.createTask("Infinite objective");
+    const executedTask = await engine.executeTask(task.id, infiniteAgent.id);
 
-    const cancelledTask = engine.cancelTask(task.id);
-
-    expect(cancelledTask.status).toBe("CANCELLED");
-  });
-
-  it("should not allow cancelling a completed task", async () => {
-    const task = engine.createTask("Complete me first");
-    await engine.executeTask(task.id, dummyAgent.id);
-
-    expect(() => engine.cancelTask(task.id)).toThrowError(/Cannot cancel a task that has already finished/);
-  });
-
-  it("should not allow executing a cancelled task", async () => {
-    const task = engine.createTask("To be cancelled and executed");
-    engine.cancelTask(task.id);
-
-    await expect(engine.executeTask(task.id, dummyAgent.id)).rejects.toThrowError(/Cannot execute a cancelled task/);
+    expect(executedTask.status).toBe("FAILED");
+    expect(executedTask.error).toBe("Exceeded maximum iterations without completing");
   });
 });

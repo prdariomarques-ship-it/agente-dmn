@@ -5,6 +5,14 @@ export type TaskStatus =
   | "FAILED"
   | "CANCELLED";
 
+export type ExecutionState =
+  | "IDLE"
+  | "OBSERVE"
+  | "THINK"
+  | "ACT"
+  | "DONE"
+  | "ERROR";
+
 export interface Task {
   id: string;
   objective: string;
@@ -13,15 +21,39 @@ export interface Task {
   result?: string;
   error?: string;
   agentId?: string;
+  metadata?: Record<string, unknown>;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ExecutionStep {
+  state: ExecutionState;
+  timestamp: Date;
+  output?: string;
+  error?: string;
+}
+
+export interface TaskExecution {
+  taskId: string;
+  agentId: string;
+  state: ExecutionState;
+  iterations: number;
+  maxIterations: number;
+  history: ExecutionStep[];
 }
 
 export interface Agent {
   id: string;
   name: string;
   description?: string;
-  execute: (task: Task) => Promise<string>;
+
+  // Agent loop phases
+  observe?: (task: Task, context: TaskExecution) => Promise<string>;
+  think?: (task: Task, context: TaskExecution) => Promise<string>;
+  act?: (task: Task, context: TaskExecution) => Promise<string>;
+
+  // Simple execution (for basic agents)
+  execute?: (task: Task) => Promise<string>;
 }
 
 export interface TaskStore {

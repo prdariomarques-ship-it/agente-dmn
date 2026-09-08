@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Agent, Task, TaskStatus, TaskStore } from "./types.js";
+import { Agent, ExecutionState, ExecutionStep, Task, TaskExecution, TaskStatus, TaskStore } from "./types.js";
 
 export class InMemoryTaskStore implements TaskStore {
   private tasks: Map<string, Task> = new Map();
@@ -24,21 +24,26 @@ export class InMemoryTaskStore implements TaskStore {
 export class TaskEngine {
   private store: TaskStore;
   private agents: Map<string, Agent> = new Map();
+  private maxIterations = 10;
 
-  constructor(store?: TaskStore) {
+  constructor(store?: TaskStore, config?: { maxIterations?: number }) {
     this.store = store || new InMemoryTaskStore();
+    if (config?.maxIterations) {
+      this.maxIterations = config.maxIterations;
+    }
   }
 
   registerAgent(agent: Agent): void {
     this.agents.set(agent.id, agent);
   }
 
-  createTask(objective: string, context?: string): Task {
+  createTask(objective: string, context?: string, metadata?: Record<string, unknown>): Task {
     const task: Task = {
       id: randomUUID(),
       objective,
       status: "PENDING",
       context,
+      metadata,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -50,7 +55,17 @@ export class TaskEngine {
     return this.store.get(id);
   }
 
-  async executeTask(taskId: string, agentId: string): Promise<Task> {
+  private recordStep(execution: TaskExecution, state: ExecutionState, output?: string, error?: string) {
+    execution.state = state;
+    execution.history.push({
+      state,
+      timestamp: new Date(),
+      output,
+      error
+    });
+  }
+
+  async executeTask(taskId: string, agentId: string, timeoutMs: number = 30000): Promise<Task> {
     const task = this.store.get(taskId);
     if (!task) {
       throw new Error(`Task with id ${taskId} not found`);
@@ -77,21 +92,109 @@ export class TaskEngine {
     task.updatedAt = new Date();
     this.store.save(task);
 
-    try {
-      const result = await agent.execute(task);
-      // Transition to COMPLETED
-      task.status = "COMPLETED";
-      task.result = result;
-      task.updatedAt = new Date();
-    } catch (error) {
-      // Transition to FAILED
-      task.status = "FAILED";
-      task.error = error instanceof Error ? error.message : String(error);
-      task.updatedAt = new Date();
-    }
+    const execution: TaskExecution = {
+      taskId,
+      agentId,
+      state: "IDLE",
+      iterations: 0,
+      maxIterations: this.maxIterations,
+      history: []
+    };
 
+    return new Promise((resolve, reject) => {
+      let isTimeout = false;
+      const timeoutId = setTimeout(() => {
+        isTimeout = true;
+        this.failTask(task, execution, "Task execution timed out");
+        resolve(task);
+      }, timeoutMs);
+
+      const runLoop = async () => {
+        try {
+          if (agent.execute && !agent.observe && !agent.think && !agent.act) {
+            // Fallback for simple agents without loop
+             const result = await agent.execute(task);
+             this.completeTask(task, execution, result);
+             clearTimeout(timeoutId);
+             return resolve(task);
+          }
+
+          // Complex Agent Loop: Observe -> Think -> Act
+          while (execution.iterations < execution.maxIterations && !isTimeout && task.status === "RUNNING") {
+            execution.iterations++;
+
+            // OBSERVE
+            this.recordStep(execution, "OBSERVE");
+            if (agent.observe) {
+              const obsOutput = await agent.observe(task, execution);
+              execution.history[execution.history.length - 1].output = obsOutput;
+            }
+
+            // THINK
+            this.recordStep(execution, "THINK");
+            if (agent.think) {
+              const thinkOutput = await agent.think(task, execution);
+              execution.history[execution.history.length - 1].output = thinkOutput;
+            }
+
+            // ACT
+            this.recordStep(execution, "ACT");
+            let isDone = false;
+            if (agent.act) {
+               const actOutput = await agent.act(task, execution);
+               execution.history[execution.history.length - 1].output = actOutput;
+               // A convention: if ACT returns a final answer starting with "DONE:", loop ends.
+               if (actOutput && actOutput.startsWith("DONE:")) {
+                  isDone = true;
+                  this.completeTask(task, execution, actOutput.substring(5).trim());
+               }
+            } else {
+               // If no act is defined, just finish
+               isDone = true;
+               this.completeTask(task, execution, "Agent completed without act phase");
+            }
+
+            if (isDone) {
+               break;
+            }
+          }
+
+          if (task.status === "RUNNING" && !isTimeout) {
+             this.failTask(task, execution, "Exceeded maximum iterations without completing");
+          }
+
+          clearTimeout(timeoutId);
+          resolve(task);
+
+        } catch (error) {
+          if (!isTimeout) {
+            this.failTask(task, execution, error instanceof Error ? error.message : String(error));
+            clearTimeout(timeoutId);
+            resolve(task);
+          }
+        }
+      };
+
+      runLoop();
+    });
+  }
+
+  private completeTask(task: Task, execution: TaskExecution, result: string) {
+    this.recordStep(execution, "DONE");
+    task.status = "COMPLETED";
+    task.result = result;
+    task.metadata = { ...task.metadata, executionHistory: execution.history };
+    task.updatedAt = new Date();
     this.store.save(task);
-    return task;
+  }
+
+  private failTask(task: Task, execution: TaskExecution, errorMsg: string) {
+    this.recordStep(execution, "ERROR", undefined, errorMsg);
+    task.status = "FAILED";
+    task.error = errorMsg;
+    task.metadata = { ...task.metadata, executionHistory: execution.history };
+    task.updatedAt = new Date();
+    this.store.save(task);
   }
 
   cancelTask(taskId: string): Task {
