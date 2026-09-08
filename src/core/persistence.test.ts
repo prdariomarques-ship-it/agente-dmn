@@ -60,6 +60,7 @@ describe("Persistent Agent Execution", () => {
     expect(execs.length).toBeGreaterThan(0);
 
     // 4. Resume via Engine B
+    engineB.resumeTask(task.id);
     const execPromiseB = engineB.recoverAndResume(task.id);
 
     const finishedTask = await execPromiseB;
@@ -103,6 +104,7 @@ describe("Persistent Agent Execution", () => {
     };
     engineB.registerAgent(agentB);
 
+    engineB.resumeTask(task.id);
     const execPromiseB = engineB.recoverAndResume(task.id);
     const finishedTask = await execPromiseB;
 

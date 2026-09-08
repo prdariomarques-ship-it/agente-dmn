@@ -106,7 +106,12 @@ export class TaskEngine {
     if (task && task.status === "PAUSED") {
       task.status = "RUNNING";
       this.taskStore.saveTask(task);
-      // It's expected that a daemon/loop is polling or recoverAndResume is called to continue it
+
+      const execs = this.execStore.getByTaskId(taskId);
+      let execution = execs.length > 0 ? execs[0] : null;
+      if (execution && execution.state !== "DONE" && execution.state !== "ERROR") {
+         this.runExecutionLoop(task, execution, 30000);
+      }
     }
   }
 
@@ -122,7 +127,7 @@ export class TaskEngine {
     }
   }
 
-  // Idempotent recovery
+  // Idempotent recovery triggered typically on system startup to find abandoned tasks
   async recoverAndResume(taskId: string, timeoutMs: number = 30000): Promise<Task> {
     const task = this.taskStore.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
@@ -131,11 +136,12 @@ export class TaskEngine {
     }
 
     if (task.status === "PAUSED") {
-      task.status = "RUNNING"; // Resume it
-    } else {
-      task.status = "RUNNING"; // Recovering from crash
+      // Do NOT blindly change to RUNNING. A human must call resumeTask()
+      return task;
     }
 
+    // Recovering from crash (was RUNNING, PENDING or QUEUED)
+    task.status = "RUNNING";
     this.taskStore.saveTask(task);
 
     const execs = this.execStore.getByTaskId(taskId);
@@ -235,7 +241,10 @@ export class TaskEngine {
               if (!wasPaused) {
                 if (timeoutId) clearTimeout(timeoutId);
                 timeoutId = null;
-                this.recordStep(execution, "WAITING_APPROVAL", "Paused waiting for human approval");
+                // Only write step if we haven't already
+                if (execution.state !== "WAITING_APPROVAL") {
+                  this.recordStep(execution, "WAITING_APPROVAL", "Paused waiting for human approval");
+                }
                 wasPaused = true;
               }
               await new Promise(r => setTimeout(r, pollingInterval));
@@ -243,6 +252,8 @@ export class TaskEngine {
               if (freshTask && freshTask.status === "FAILED") {
                  task.status = "FAILED";
                  task.error = freshTask.error;
+              } else if (freshTask && freshTask.status === "RUNNING") {
+                 task.status = "RUNNING"; // Catch resume
               }
               continue;
             }
@@ -253,35 +264,50 @@ export class TaskEngine {
             }
 
             const loopStartTime = Date.now();
-            execution.iterations++;
 
-            this.recordStep(execution, "OBSERVE");
-            if (agent.observe) {
-              const obsOutput = await agent.observe(task, execution);
-              execution.history[execution.history.length - 1].output = obsOutput;
-              this.execStore.saveExecution(execution);
-            }
+            // Checkpoint awareness: Resume exactly from where we left off
+            const lastState = execution.state;
 
-            this.recordStep(execution, "THINK");
-            if (agent.think) {
-              const thinkOutput = await agent.think(task, execution);
-              execution.history[execution.history.length - 1].output = thinkOutput;
-              this.execStore.saveExecution(execution);
-            }
-
-            this.recordStep(execution, "ACT");
-            let isDone = false;
-            if (agent.act) {
-               const actOutput = await agent.act(task, execution);
-               execution.history[execution.history.length - 1].output = actOutput;
-               this.execStore.saveExecution(execution);
-               if (actOutput && actOutput.startsWith("DONE:")) {
-                  isDone = true;
-                  this.completeTask(task, execution, actOutput.substring(5).trim());
-               }
+            // If we are recovering and the last state was OBSERVE, we jump straight to THINK
+            if (lastState === "OBSERVE") {
+               // Jump to think
+            } else if (lastState === "THINK") {
+               // Jump to act
             } else {
-               isDone = true;
-               this.completeTask(task, execution, "Agent completed without act phase");
+               // Normal iteration start
+               execution.iterations++;
+               this.recordStep(execution, "OBSERVE");
+               if (agent.observe) {
+                 const obsOutput = await agent.observe(task, execution);
+                 execution.history[execution.history.length - 1].output = obsOutput;
+                 this.execStore.saveExecution(execution);
+               }
+            }
+
+            if (lastState !== "THINK" && task.status === "RUNNING") {
+              this.recordStep(execution, "THINK");
+              if (agent.think) {
+                const thinkOutput = await agent.think(task, execution);
+                execution.history[execution.history.length - 1].output = thinkOutput;
+                this.execStore.saveExecution(execution);
+              }
+            }
+
+            let isDone = false;
+            if (task.status === "RUNNING") {
+              this.recordStep(execution, "ACT");
+              if (agent.act) {
+                 const actOutput = await agent.act(task, execution);
+                 execution.history[execution.history.length - 1].output = actOutput;
+                 this.execStore.saveExecution(execution);
+                 if (actOutput && actOutput.startsWith("DONE:")) {
+                    isDone = true;
+                    this.completeTask(task, execution, actOutput.substring(5).trim());
+                 }
+              } else {
+                 isDone = true;
+                 this.completeTask(task, execution, "Agent completed without act phase");
+              }
             }
 
             totalRunningTime += (Date.now() - loopStartTime);
