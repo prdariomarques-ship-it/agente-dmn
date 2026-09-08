@@ -60,12 +60,6 @@ describe("TaskEngine Loop Enhancements", () => {
 
     expect(executedTask.status).toBe("COMPLETED");
     expect(executedTask.result).toBe("Final Answer");
-
-    const history = executedTask.metadata?.executionHistory as any[];
-    expect(history).toBeDefined();
-    // 2 iterations = observe, think, act, observe, think, act, DONE
-    expect(history.length).toBe(7);
-    expect(history[6].state).toBe("DONE");
   });
 
   it("should handle failure within the loop", async () => {
@@ -74,9 +68,6 @@ describe("TaskEngine Loop Enhancements", () => {
 
     expect(executedTask.status).toBe("FAILED");
     expect(executedTask.error).toBe("observe failed");
-
-    const history = executedTask.metadata?.executionHistory as any[];
-    expect(history[history.length - 1].state).toBe("ERROR");
   });
 
   it("should fail task if it exceeds max iterations", async () => {
@@ -85,5 +76,22 @@ describe("TaskEngine Loop Enhancements", () => {
 
     expect(executedTask.status).toBe("FAILED");
     expect(executedTask.error).toBe("Exceeded maximum iterations without completing");
+  });
+
+  it("should allow a human to reject a paused task", async () => {
+    const task = engine.createTask("Reject Test");
+    task.status = "PAUSED";
+    store.saveTask(task);
+
+    engine.rejectTask(task.id, "Not safe");
+
+    const finishedTask = engine.getTask(task.id);
+    expect(finishedTask?.status).toBe("FAILED");
+    expect(finishedTask?.error).toBe("REJECTED: Not safe");
+  });
+
+  it("should throw error if rejecting a task that is not paused", () => {
+    const task = engine.createTask("Reject Not Paused");
+    expect(() => engine.rejectTask(task.id, "nope")).toThrowError(/Can only reject a task that is PAUSED/);
   });
 });

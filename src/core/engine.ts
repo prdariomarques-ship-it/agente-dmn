@@ -1,34 +1,50 @@
 import { randomUUID } from "node:crypto";
-import { Agent, EngineEvent, EngineObserver, ExecutionState, ExecutionStep, Task, TaskExecution, TaskStatus, TaskStore } from "./types.js";
+import { Agent, EngineEvent, EngineObserver, ExecutionState, ExecutionStep, ExecutionStore, Task, TaskExecution, TaskStatus, TaskStore } from "./types.js";
 
-export class InMemoryTaskStore implements TaskStore {
+export class InMemoryTaskStore implements TaskStore, ExecutionStore {
   private tasks: Map<string, Task> = new Map();
+  private executions: Map<string, TaskExecution> = new Map();
 
-  save(task: Task): void {
+  saveTask(task: Task): void {
     this.tasks.set(task.id, { ...task });
   }
 
-  get(id: string): Task | undefined {
+  getTask(id: string): Task | undefined {
     return this.tasks.get(id);
   }
 
-  list(): Task[] {
+  listTasks(): Task[] {
     return Array.from(this.tasks.values());
   }
 
-  delete(id: string): boolean {
+  deleteTask(id: string): boolean {
     return this.tasks.delete(id);
+  }
+
+  saveExecution(execution: TaskExecution): void {
+    this.executions.set(execution.id, { ...execution });
+  }
+
+  getExecution(id: string): TaskExecution | undefined {
+    return this.executions.get(id);
+  }
+
+  getByTaskId(taskId: string): TaskExecution[] {
+    return Array.from(this.executions.values()).filter(e => e.taskId === taskId).sort((a,b) => b.startedAt.getTime() - a.startedAt.getTime());
   }
 }
 
 export class TaskEngine {
-  private store: TaskStore;
+  private taskStore: TaskStore;
+  private execStore: ExecutionStore;
   private agents: Map<string, Agent> = new Map();
   private maxIterations = 10;
   private observers: EngineObserver[] = [];
 
-  constructor(store?: TaskStore, config?: { maxIterations?: number }) {
-    this.store = store || new InMemoryTaskStore();
+  constructor(store?: TaskStore & ExecutionStore, config?: { maxIterations?: number }) {
+    const inMem = new InMemoryTaskStore();
+    this.taskStore = store || inMem;
+    this.execStore = store || inMem;
     if (config?.maxIterations) {
       this.maxIterations = config.maxIterations;
     }
@@ -58,41 +74,101 @@ export class TaskEngine {
       createdAt: new Date(),
       updatedAt: new Date(),
     };
-    this.store.save(task);
+    this.taskStore.saveTask(task);
     this.emit({ type: "TASK_CREATED", taskId: task.id, timestamp: new Date(), payload: { objective } });
     return task;
   }
 
   getTask(id: string): Task | undefined {
-    return this.store.get(id);
+    return this.taskStore.getTask(id);
   }
 
   private recordStep(execution: TaskExecution, state: ExecutionState, output?: string, error?: string) {
     execution.state = state;
     const step = { state, timestamp: new Date(), output, error };
     execution.history.push(step);
+    execution.updatedAt = new Date();
+    this.execStore.saveExecution(execution); // CHECKPOINT
     this.emit({ type: "STATE_CHANGED", taskId: execution.taskId, timestamp: new Date(), payload: { state, output, error } });
   }
 
   pauseForApproval(taskId: string): void {
-    const task = this.store.get(taskId);
+    const task = this.taskStore.getTask(taskId);
     if (task && task.status === "RUNNING") {
       task.status = "PAUSED";
-      this.store.save(task);
+      this.taskStore.saveTask(task);
       this.emit({ type: "APPROVAL_REQUESTED", taskId, timestamp: new Date(), payload: {} });
     }
   }
 
   resumeTask(taskId: string): void {
-    const task = this.store.get(taskId);
+    const task = this.taskStore.getTask(taskId);
     if (task && task.status === "PAUSED") {
       task.status = "RUNNING";
-      this.store.save(task);
+      this.taskStore.saveTask(task);
+      // It's expected that a daemon/loop is polling or recoverAndResume is called to continue it
     }
   }
 
+  rejectTask(taskId: string, reason: string): void {
+    const task = this.taskStore.getTask(taskId);
+    if (task && task.status === "PAUSED") {
+      task.status = "FAILED";
+      task.error = `REJECTED: ${reason}`;
+      this.taskStore.saveTask(task);
+      this.emit({ type: "TASK_FAILED", taskId: task.id, timestamp: new Date(), payload: { error: task.error } });
+    } else if (task) {
+      throw new Error("Can only reject a task that is PAUSED for approval");
+    }
+  }
+
+  // Idempotent recovery
+  async recoverAndResume(taskId: string, timeoutMs: number = 30000): Promise<Task> {
+    const task = this.taskStore.getTask(taskId);
+    if (!task) throw new Error(`Task ${taskId} not found`);
+    if (task.status === "COMPLETED" || task.status === "FAILED" || task.status === "CANCELLED") {
+      return task; // Already done
+    }
+
+    if (task.status === "PAUSED") {
+      task.status = "RUNNING"; // Resume it
+    } else {
+      task.status = "RUNNING"; // Recovering from crash
+    }
+
+    this.taskStore.saveTask(task);
+
+    const execs = this.execStore.getByTaskId(taskId);
+    let execution = execs.length > 0 ? execs[0] : null;
+
+    if (execution && execution.state === "ACT") {
+      this.failTask(task, execution, "CRASH RECOVERY: Ambiguous state interrupted during ACT. Requires human reconciliation.");
+      return task;
+    }
+
+    if (!execution || execution.state === "DONE" || execution.state === "ERROR") {
+      execution = {
+        id: randomUUID(),
+        taskId,
+        agentId: task.agentId || "unknown",
+        state: "IDLE",
+        iterations: 0,
+        maxIterations: this.maxIterations,
+        history: [],
+        startedAt: new Date(),
+        updatedAt: new Date()
+      };
+    }
+
+    if (task.agentId) {
+      execution.agentId = task.agentId;
+    }
+
+    return this.runExecutionLoop(task, execution, timeoutMs);
+  }
+
   async executeTask(taskId: string, agentId: string, timeoutMs: number = 30000): Promise<Task> {
-    const task = this.store.get(taskId);
+    const task = this.taskStore.getTask(taskId);
     if (!task) throw new Error(`Task with id ${taskId} not found`);
 
     if (task.status === "CANCELLED") throw new Error(`Cannot execute a cancelled task`);
@@ -105,22 +181,33 @@ export class TaskEngine {
     task.status = "RUNNING";
     task.agentId = agent.id;
     task.updatedAt = new Date();
-    this.store.save(task);
+    this.taskStore.saveTask(task);
 
     const execution: TaskExecution = {
+      id: randomUUID(),
       taskId,
       agentId,
       state: "IDLE",
       iterations: 0,
       maxIterations: this.maxIterations,
-      history: []
+      history: [],
+      startedAt: new Date(),
+      updatedAt: new Date()
     };
+    this.execStore.saveExecution(execution);
+
+    return this.runExecutionLoop(task, execution, timeoutMs);
+  }
+
+  private async runExecutionLoop(task: Task, execution: TaskExecution, timeoutMs: number): Promise<Task> {
+    const agent = this.agents.get(execution.agentId);
+    if (!agent) throw new Error(`Agent with id ${execution.agentId} not found for recovery`);
 
     return new Promise((resolve) => {
       let isTimeout = false;
       let timeoutId: NodeJS.Timeout | null = null;
       let totalRunningTime = 0;
-      const pollingInterval = 100;
+      const pollingInterval = 50;
 
       const setExecutionTimeout = () => {
         if (timeoutId) clearTimeout(timeoutId);
@@ -146,20 +233,21 @@ export class TaskEngine {
           while (execution.iterations < execution.maxIterations && !isTimeout && (task.status === "RUNNING" || task.status === "PAUSED")) {
             if (task.status === "PAUSED") {
               if (!wasPaused) {
-                // Pause the timeout
                 if (timeoutId) clearTimeout(timeoutId);
                 timeoutId = null;
-                // Only record the step ONCE when it transitions to paused
                 this.recordStep(execution, "WAITING_APPROVAL", "Paused waiting for human approval");
                 wasPaused = true;
               }
-              // Wait without spamming
               await new Promise(r => setTimeout(r, pollingInterval));
+              const freshTask = this.taskStore.getTask(task.id);
+              if (freshTask && freshTask.status === "FAILED") {
+                 task.status = "FAILED";
+                 task.error = freshTask.error;
+              }
               continue;
             }
 
             if (wasPaused && task.status === "RUNNING") {
-              // Resumed
               wasPaused = false;
               setExecutionTimeout();
             }
@@ -171,12 +259,14 @@ export class TaskEngine {
             if (agent.observe) {
               const obsOutput = await agent.observe(task, execution);
               execution.history[execution.history.length - 1].output = obsOutput;
+              this.execStore.saveExecution(execution);
             }
 
             this.recordStep(execution, "THINK");
             if (agent.think) {
               const thinkOutput = await agent.think(task, execution);
               execution.history[execution.history.length - 1].output = thinkOutput;
+              this.execStore.saveExecution(execution);
             }
 
             this.recordStep(execution, "ACT");
@@ -184,6 +274,7 @@ export class TaskEngine {
             if (agent.act) {
                const actOutput = await agent.act(task, execution);
                execution.history[execution.history.length - 1].output = actOutput;
+               this.execStore.saveExecution(execution);
                if (actOutput && actOutput.startsWith("DONE:")) {
                   isDone = true;
                   this.completeTask(task, execution, actOutput.substring(5).trim());
@@ -199,6 +290,10 @@ export class TaskEngine {
 
           if (task.status === "RUNNING" && !isTimeout) {
              this.failTask(task, execution, "Exceeded maximum iterations without completing");
+          }
+
+          if (task.status === "FAILED" && task.error?.startsWith("REJECTED:")) {
+             this.recordStep(execution, "ERROR", undefined, task.error);
           }
 
           if (timeoutId) clearTimeout(timeoutId);
@@ -223,7 +318,7 @@ export class TaskEngine {
     task.result = result;
     task.metadata = { ...task.metadata, executionHistory: execution.history };
     task.updatedAt = new Date();
-    this.store.save(task);
+    this.taskStore.saveTask(task);
     this.emit({ type: "TASK_COMPLETED", taskId: task.id, timestamp: new Date(), payload: { result } });
   }
 
@@ -233,18 +328,18 @@ export class TaskEngine {
     task.error = errorMsg;
     task.metadata = { ...task.metadata, executionHistory: execution.history };
     task.updatedAt = new Date();
-    this.store.save(task);
+    this.taskStore.saveTask(task);
     this.emit({ type: "TASK_FAILED", taskId: task.id, timestamp: new Date(), payload: { error: errorMsg } });
   }
 
   cancelTask(taskId: string): Task {
-    const task = this.store.get(taskId);
+    const task = this.taskStore.getTask(taskId);
     if (!task) throw new Error(`Task with id ${taskId} not found`);
     if (task.status === "COMPLETED" || task.status === "FAILED") throw new Error(`Cannot cancel a task that has already finished`);
 
     task.status = "CANCELLED";
     task.updatedAt = new Date();
-    this.store.save(task);
+    this.taskStore.saveTask(task);
     return task;
   }
 }

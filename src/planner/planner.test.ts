@@ -97,4 +97,48 @@ describe("SimplePlanner", () => {
     planner.updateGraphStatus(graph);
     expect(graph.status).toBe("FAILED");
   });
+
+  it("should throw error if task graph contains a cycle", () => {
+    const taskA = mockEngine.createTask("A");
+    const taskB = mockEngine.createTask("B");
+
+    const graph: TaskGraph = {
+      id: "g-cycle",
+      objective: "cyclic graph",
+      tasks: [taskA, taskB],
+      dependencies: [
+        { taskId: taskA.id, dependsOnId: taskB.id },
+        { taskId: taskB.id, dependsOnId: taskA.id }
+      ],
+      status: "PENDING",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    expect(() => planner.getNextExecutableTasks(graph)).toThrowError(/contains a cycle/);
+  });
+
+  it("should not return tasks whose dependencies have failed", () => {
+    const taskA = mockEngine.createTask("A");
+    const taskB = mockEngine.createTask("B"); // Depends on A
+
+    const graph: TaskGraph = {
+      id: "g2",
+      objective: "fail test",
+      tasks: [taskA, taskB],
+      dependencies: [
+        { taskId: taskB.id, dependsOnId: taskA.id }
+      ],
+      status: "PENDING",
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    // A fails
+    taskA.status = "FAILED";
+
+    const executable = planner.getNextExecutableTasks(graph);
+    // Because A failed, B cannot execute, should be empty
+    expect(executable.length).toBe(0);
+  });
 });

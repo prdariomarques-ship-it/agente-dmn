@@ -4,94 +4,61 @@ The goal is not to build the entire system at once, but to construct a small, co
 
 ## Phase 0: AUDIT (Current Phase)
 - **Goal:** Understand current state and define architecture.
-- **Deliverables:**
-  - `DARIUS_OSS_AUDIT.md`
-  - `DARIUS_OSS_ARCHITECTURE.md`
-  - `DARIUS_OSS_ROADMAP.md`
-- **Status:** In Progress.
+- **Status:** COMPLETED
 
 ## Phase 1: CORE RUNTIME
 - **Goal:** Implement the fundamental units.
-- **Deliverables:**
-  - Core, Task, State abstractions.
-  - Agent and Model abstractions.
-  - Basic Tool abstractions.
-- **Milestone:** The system can define and track a single, simple Task.
+- **Status:** COMPLETED
 
 ## Phase 2: PLANNER
 - **Goal:** Enable complex objective execution.
-- **Deliverables:**
-  - Task Graph generation.
-  - Dependencies and Parallel execution.
-  - Retries and Checkpoints.
-- **Milestone:** System can break down an objective into multiple linked Tasks.
+- **Status:** COMPLETED
 
 ## Phase 3: TOOL ENGINE
 - **Goal:** Robust tool execution and integration.
+- **Status:** COMPLETED
+
+## Phase 4.5: PERSISTENCE & RECOVERY (New Priority)
+- **Goal:** Survive process restarts and explicitly separate Task State from Memory.
 - **Deliverables:**
-  - Tool registry and Permissions.
-  - Execution and Validation.
-  - Initial MCP adapter.
-- **Milestone:** Agents can safely use native and external tools.
+  - TaskStore, ExecutionStore, EventStore, CheckpointStore.
+  - State persistence and Crash recovery (`resume()`).
+  - Idempotency mechanisms to prevent duplicate side effects.
+- **Milestone:** Process can crash during Observe/Think/Act and safely recover.
+- **Status:** IN PROGRESS
 
 ## Phase 4: MEMORY
-- **Goal:** Persistent and semantic memory.
-- **Deliverables:**
-  - Memory interface and Local storage.
-  - Retrieval, Ranking, and Persistence.
-- **Milestone:** Agents can recall information from past tasks and sessions.
+- **Goal:** Persistent and semantic memory (Short-term, Session, Episodic, Semantic, Procedural, Long-term).
+- **Status:** COMPLETED (Moved to interface implementation, will integrate further after Persistence phase)
 
 ## Phase 5: CONTEXT ENGINE
-- **Goal:** Optimize LLM context usage.
-- **Deliverables:**
-  - Context selection and Compression.
-  - Retrieval and Token budgeting.
-- **Milestone:** No more context overflows; relevant context is injected automatically.
+- **Goal:** Optimize LLM context usage (Retrieval, compression, token budgeting).
+- **Status:** PENDING
 
 ## Phase 6: SKILLS
 - **Goal:** Codify procedural knowledge.
-- **Deliverables:**
-  - Skill loader and Registry.
-  - Skill execution and Validation.
-- **Milestone:** Agents can load and execute specific workflow templates.
+- **Status:** PENDING
 
 ## Phase 7: MULTI-AGENT
 - **Goal:** Specialized roles and collaboration.
-- **Deliverables:**
-  - Delegation mechanisms.
-  - Specialized agents (Research, Coder, Critic).
-  - Inter-agent communication and lifecycle.
-- **Milestone:** Tasks can be passed between specialized agents.
+- **Status:** PENDING
 
 ## Phase 8: BACKGROUND TASKS
-- **Goal:** Autonomous and recurring execution.
-- **Deliverables:**
-  - Scheduler, Recurring, and Long-running tasks.
-  - Checkpoints and Notifications.
-- **Milestone:** DARIUS can execute tasks periodically without human triggers.
+- **Goal:** Autonomous, long-running, and recurring execution.
+- **Status:** PENDING
 
 ## Phase 9: BROWSER
 - **Goal:** Web interaction capability.
-- **Deliverables:**
-  - Browser abstraction and adapters.
-- **Milestone:** Agents can safely navigate and extract data from the web.
+- **Status:** PENDING
 
 ## Phase 10: ARTIFACTS
 - **Goal:** Structured output management.
-- **Deliverables:**
-  - Artifact Engine to track code, documents, and media generation.
-- **Milestone:** DARIUS can produce and version verifiable outputs.
+- **Status:** PENDING
 
 ## Phase 11: OBSERVABILITY
 - **Goal:** System visibility and tracing.
-- **Deliverables:**
-  - Logs, metrics, traces.
-  - Cost and execution history tracking.
-- **Milestone:** Full visibility into what the system did and why.
+- **Status:** PENDING
 
 ## Phase 12: SECURITY HARDENING
 - **Goal:** Enterprise-grade security.
-- **Deliverables:**
-  - Audits of permissions, sandbox, secrets, and network.
-  - Protection against prompt injection and data leakage.
-- **Milestone:** A highly secure and resilient runtime.
+- **Status:** PENDING

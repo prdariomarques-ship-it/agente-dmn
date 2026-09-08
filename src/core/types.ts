@@ -4,7 +4,8 @@ export type TaskStatus =
   | "COMPLETED"
   | "FAILED"
   | "CANCELLED"
-  | "PAUSED"; // Added for Human-in-the-loop
+  | "PAUSED"
+  | "QUEUED"; // Added for background execution
 
 export type ExecutionState =
   | "IDLE"
@@ -13,7 +14,7 @@ export type ExecutionState =
   | "ACT"
   | "DONE"
   | "ERROR"
-  | "WAITING_APPROVAL"; // Added for Human-in-the-loop
+  | "WAITING_APPROVAL";
 
 export interface Task {
   id: string;
@@ -36,12 +37,15 @@ export interface ExecutionStep {
 }
 
 export interface TaskExecution {
+  id: string; // Separated execution identity
   taskId: string;
   agentId: string;
   state: ExecutionState;
   iterations: number;
   maxIterations: number;
   history: ExecutionStep[];
+  startedAt: Date;
+  updatedAt: Date;
 }
 
 export interface Agent {
@@ -49,23 +53,26 @@ export interface Agent {
   name: string;
   description?: string;
 
-  // Agent loop phases
   observe?: (task: Task, context: TaskExecution) => Promise<string>;
   think?: (task: Task, context: TaskExecution) => Promise<string>;
   act?: (task: Task, context: TaskExecution) => Promise<string>;
 
-  // Simple execution (for basic agents)
   execute?: (task: Task) => Promise<string>;
 }
 
 export interface TaskStore {
-  save(task: Task): void;
-  get(id: string): Task | undefined;
-  list(): Task[];
-  delete(id: string): boolean;
+  saveTask(task: Task): void;
+  getTask(id: string): Task | undefined;
+  listTasks(): Task[];
+  deleteTask(id: string): boolean;
 }
 
-// Added for Telemetry/UI streams
+export interface ExecutionStore {
+  saveExecution(execution: TaskExecution): void;
+  getExecution(id: string): TaskExecution | undefined;
+  getByTaskId(taskId: string): TaskExecution[];
+}
+
 export interface EngineEvent {
   type: "TASK_CREATED" | "STATE_CHANGED" | "TASK_COMPLETED" | "TASK_FAILED" | "APPROVAL_REQUESTED";
   taskId: string;
