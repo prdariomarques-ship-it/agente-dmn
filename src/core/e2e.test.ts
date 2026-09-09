@@ -80,4 +80,25 @@ describe("DARIUS End-to-End Execution Flow", () => {
     const thinkStep = exec.history.find(h => h.state === "THINK");
     expect(thinkStep?.output).toContain("Simulated response based on context.");
   });
+
+  it("should handle Model failure and persist the error state", async () => {
+    // Scenario B: Model invocation fails -> Execution records failure -> state is persisted.
+    const task = taskEngine.createTask("Test Objective FAIL");
+
+    const finishedTask = await taskEngine.executeTask(task.id, agent.id);
+
+    expect(finishedTask.status).toBe("FAILED");
+    expect(finishedTask.error).toContain("Simulated LLM Error");
+
+    // Check persistence
+    const executions = store.getByTaskId(task.id);
+    expect(executions.length).toBe(1);
+    const exec = executions[0];
+    expect(exec.state).toBe("ERROR");
+
+    // The last history step should contain the error
+    const lastStep = exec.history[exec.history.length - 1];
+    expect(lastStep.state).toBe("ERROR");
+    expect(lastStep.error).toContain("Simulated LLM Error");
+  });
 });
