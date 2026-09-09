@@ -46,10 +46,6 @@ describe("Live Validation Scenarios", () => {
     store.saveTask(dbTask);
 
     let p = taskEngine.executeTask(task.id, "worker2"); // executeTask sets it to RUNNING!
-    // Ah, executeTask sets it to RUNNING unconditionally!
-    // So we need to start it, and THEN pause it? But it doesn't sync!
-    // The only way is if it crashes, we recover it as PAUSED.
-    // Or we use `recoverAndResume` which doesn't set it to RUNNING immediately if it was PAUSED!
 
     const t2 = taskEngine.createTask("HITL Test");
     t2.status = "PAUSED";
@@ -70,15 +66,7 @@ describe("Live Validation Scenarios", () => {
     store.saveTask(tToResume);
 
     const completed = await p2;
-    // Note: since the agent is not mocked here to return DONE, it will fail via "Exceeded maximum iterations"
-    // Actually, wait, `agent.act` WAS mocked. It is mapped to `worker2`. But we did `recoverAndResume(t2.id)`.
-    // It doesn't pass the agent ID to recoverAndResume, it reads it from the task!
-    // We didn't set `t2.agentId`!
-    // That's why it failed with "Agent with id undefined not found" initially, wait, no, the task.agentId was undefined, so it failed before even starting!
-    // But since it failed before starting, it was marked FAILED? NO, if it throws, it rejects!
-    // BUT since we awaited it AFTER 50ms, it threw an unhandled rejection, or it threw synchronously and p2 was a rejected promise!
-    // Let's set the agentId!
-  });
+                                  });
 
   it("Hard Crash Mid-ACT verification", async () => {
     let store = new SQLitePersistentStore(dbPath);
