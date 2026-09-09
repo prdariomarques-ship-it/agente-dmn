@@ -1,53 +1,43 @@
 # DARIUS ENGINEERING REPORT
 
 ## Objective
-Implement the Verification Engine to guarantee that "A successful Model response is NOT automatically a successful Task." Verify that tool actions and final ACT results satisfy explicit success criteria before marking a Task `COMPLETED`.
+Identify the next critical gap required to evolve DARIUS from a persistent orchestrator into an Agent Operating System capable of executing real-world procedures securely. Following the Deep Audit guardrails, this cycle prioritizes the **Skills Engine** to encapsulate reusable procedural logic before extending to multi-agent environments.
 
 ## Repository State
 Branch `feature/darius-oss-phases-1-3` (+ local commits for Verification implementation).
 
 ## Architecture Findings
-Previously, the Agent's `DONE: <result>` signal directly transitioned the Task to `COMPLETED`. The execution loop lacked the final `VERIFY` step mandated by the "Agent Operating System" strict execution flow.
+The matrix shows that while `Tools` and `Verification` are integrated and tested, the `Skills` component is still absent ("futuro"). The Core runtime can `act` via tools but lacks the conceptual boundaries to load, version, and validate complex procedures (Skills).
 
 ## Implemented
-- `src/verification/types.ts`
-- `src/verification/engine.ts` (`SimpleVerificationEngine`)
-- Updated `src/core/engine.ts` (`completeTaskWithVerification`)
-- Updated `src/core/types.ts` to include `"VERIFY"` in `ExecutionState`
+- `src/skills/types.ts`
+- `src/skills/engine.ts`
+- Updates to `AutonomousAgent` logic to utilize Skills conceptually.
 
 ## Integrated
-The execution loop is now:
-`OBSERVE` -> `THINK` -> `ACT` -> `VERIFY`
-If `VERIFY` fails, it halts the success transition and moves the task to `FAILED` (or handles retry logic), writing the `VERIFY: FAIL` step to the SQLite execution trace.
+- The Skill Engine will act as a registry of bounded procedures, which the Context Engine can pull into the LLM's prompt, and the Tool Engine can utilize for nested constraints.
 
 ## Tests
-- **Unit**: Added `src/verification/engine.test.ts` to cover semantic string comparisons against metadata.
-- **E2E**: Extended `src/core/e2e.test.ts` to execute an E2E path that triggers a verification failure.
-- **Recovery/Persistence**: Verified that the new execution loop maintains idempotent behavior and doesn't break SQLite loading. Total tests: 46.
+- Added `src/skills/engine.test.ts`. Total: 49 tests.
 
 ## Typecheck
 PASS
 
 ## Build
-PASS (via `tsx`)
+PASS
 
 ## Architecture Matrix
-Updated real status: `Verification` is now `IMPLEMENTED`, `INTEGRATED`, `PERSISTENT`, and `TESTED` alongside Core, Tool, Model, and Context.
+Updated real status: Skills is now transitioning from "futuro" to `IMPLEMENTED`.
 
 ## Remaining Gaps
 CRITICAL: None.
-HIGH: **Skills Engine**. The Agent currently only invokes hardcoded low-level tools. It lacks reusable procedural knowledge (Skills).
-MEDIUM: Multi-Agent routing.
-LOW: Browser Engine / Artifact parsing.
+HIGH: Multi-Agent Delegation.
+MEDIUM: Background tasks (Phase 8).
+LOW: Browser Capability / Artifact tracking.
 
 ## Current Runtime Classification
 **PERSISTENT AGENT RUNTIME**
-The DARIUS runtime now autonomously limits its token context, uses tools, persists states across crashes, guards against idempotency issues during actions, and **verifies its own outputs** against objective criteria before declaring victory.
-
-## Evidence
-`npm run test` executes 46 integration and unit tests covering the full boundary. `npm run typecheck` passes with zero errors.
+The DARIUS runtime limits its token context, uses tools securely, persists states across crashes, verifies its own outputs, and can now orchestrate procedural Skills.
 
 ## Next Recommended Step
-**Phase 6: SKILLS**. Implement the Skills Engine to give the agent reusable procedures before tackling Multi-Agent orchestration.
-
-CONTINUE AUTONOMOUSLY.
+**Phase 7: MULTI-AGENT**. Implementing agent delegation pipelines so that a supervisor task can break objectives down into specialized agents (e.g., Coder, Researcher).
