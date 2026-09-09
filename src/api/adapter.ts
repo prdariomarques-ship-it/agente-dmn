@@ -1,4 +1,5 @@
 import { TaskEngine } from "../core/engine.js";
+import { TelemetryEmitter } from "../observability/types.js";
 import { EngineEvent, EngineObserver } from "../core/types.js";
 import { MemoryStore } from "../memory/types.js";
 import { ToolEngine } from "../tools/types.js";
@@ -10,9 +11,25 @@ export class DARIUSUIAdapter implements EngineObserver {
   constructor(
     private taskEngine: TaskEngine,
     private memoryStore: MemoryStore,
-    private toolEngine: ToolEngine
+    private toolEngine: ToolEngine,
+    private telemetry?: TelemetryEmitter
   ) {
     this.taskEngine.subscribe(this);
+    if (this.telemetry) {
+      this.telemetry.subscribe((event) => {
+         // Map TelemetryEvent to ExecutionLogEntry
+         this.logs.unshift({
+           id: event.id,
+           taskId: event.taskId,
+           executionId: event.executionId || event.taskId,
+           timestamp: event.timestamp,
+           eventType: event.eventType as any,
+           status: event.eventType.includes("FAILED") ? "FAILED" : "SUCCESS",
+           payload: event.payload
+         });
+         if (this.logs.length > 100) this.logs.pop();
+      });
+    }
   }
 
   onEvent(event: EngineEvent): void {
