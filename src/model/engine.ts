@@ -5,7 +5,6 @@ export class MockModelProvider implements ModelProvider {
   public name = "mock-llm";
 
   supportsCapabilities(caps: string[]): boolean {
-    // Mock supports everything except "vision"
     return !caps.includes("vision");
   }
 
@@ -20,9 +19,14 @@ export class MockModelProvider implements ModelProvider {
       throw new Error("Simulated LLM Error");
     }
 
-    // A simple heuristic for mock tests
+    // ACT phase generation vs THINK phase generation heuristic
+    // For tests, if the compiled context includes the objective 'DONE',
+    // we make the model output DONE to finish the loop, but only when it is making an "action" request
     if (request.context.taskObjective.includes("DONE")) {
-       responseText = "DONE: Task complete";
+       // Check if this is the "act" phase explicitly using temperature heuristic or fullPrompt
+       if (request.temperature === 0.2 || request.context.fullPrompt.includes("action")) {
+          responseText = "DONE: Task complete";
+       }
     }
 
     const completionTokens = Math.ceil(responseText.length / 4);

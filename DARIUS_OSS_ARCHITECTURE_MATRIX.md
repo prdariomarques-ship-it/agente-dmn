@@ -13,7 +13,7 @@ Planner                    ✓            ✓              ?            ✓     
 Persistence                ✓            ✓              ?            ✓           ✓
 Recovery                   ✓            ✓              ?            ✓           ✓
 Memory                     ✓            ✓              ?            ?           ✓
-Context                    ✓            ?              ?            ?           ?
+Context                    ✓            ✓              ✓            ✓           ✓
 Model                      ✓            ✓ (Router)     ?            N/A         ✓
 Tool                       ✓            parcial        ?            N/A         ✓
 MCP                        ✓            parcial        ?            N/A         ?
