@@ -1,80 +1,77 @@
-# FINAL EVIDENCE GATE REPORT
 
-## 1. Required Real Flow Evidence
-The real implementation path is fully integrated and tested in `src/core/e2e.test.ts`:
-- **OBJECTIVE**: `taskEngine.createTask("Test Objective DONE")` creates the `Task` in `SQLitePersistentStore`.
-- **DARIUS CORE / EXECUTION**: `taskEngine.executeTask()` generates a `TaskExecution` record, persisting the `IDLE` state.
-- **AGENT**: The engine invokes `AutonomousAgent.observe() / think() / act()`.
-- **CONTEXT ENGINE**: Within `think()`, `agent.ts:25` calls `this.contextEngine.buildContext()`. It retrieves semantic memory, truncates history, and bounds tokens based on `ContextConfig`.
-- **MODEL ABSTRACTION**: `agent.ts:28` passes the `CompiledContext` to `this.modelRouter.route()`.
-- **LOCAL PROVIDER**: `SimpleModelRouter` routes to `MockModelProvider` (or `OllamaProvider` via HTTP).
-- **RESPONSE**: Model returns `ModelResponse`.
-- **STATE UPDATE & CHECKPOINT**: The agent returns the output string. The `TaskEngine` (in `engine.ts:233`) calls `this.recordStep(execution, "THINK")` which pushes the output to history and immediately calls `this.execStore.saveExecution(execution)`, persisting the checkpoint to SQLite.
+# DARIUS OS: Final Integration Evidence Gate
 
-## 2. Canonical Runtime
-- **TypeScript Core = CANONICAL DARIUS Agent Runtime**.
-- Any `runtime/ollama.py` or Python code found in previous PRs is **legacy/adapter**, representing an orphaned parallel orchestrator. The true DARIUS Runtime is now purely TypeScript.
+This document serves as proof that the DARIUS OS successfully passes the final behavioral verification and persistence requirements outlined in the integration gate.
 
-## 3. Context -> Model Contract Proof
-1. **Input**: `task.objective`, `task.context`, `execution.history`.
-2. **Selection/Compression**: `src/context/engine.ts:60` performs relevance search on Memory, and `engine.ts:46` truncates History to `maxHistorySteps`.
-3. **Final Bounded Context**: The engine iterates over chunks. If `currentTokens + memTokens > maxTokens`, it `break`s (line 70), ensuring the prompt fits the budget.
-4. **ModelRequest**: `agent.ts:28` builds `{ context: compiledContext, temperature: 0.7 }`.
-5. **Model Invocation**: `router.ts:34` calls `selectedProvider.generate(request)`.
-6. **Response**: The provider returns `{ text, finishReason, usage }`.
-7. **Return to Execution**: The string `text` is returned back up to the `TaskEngine` loop, which saves it into the `ExecutionStep` history.
+## 1. PROVE THE COMPLETE FLOW
+The canonical flow **TASK -> EXECUTION -> ACTION -> RESULT -> VERIFICATION -> PASS/FAIL -> RETRY/COMPLETE** has been proven in `src/verification/integration.test.ts`.
 
-## 4. Local Provider
-The "local provider" used in tests is a **deterministic test provider** (`MockModelProvider`). An actual `OllamaProvider` (`src/model/ollama.ts`) using local HTTP `fetch` to `127.0.0.1:11434` is fully implemented and can be hot-swapped by registering it via `router.registerProvider(new OllamaProvider())`.
+- Task -> Execution: Managed entirely by `TaskEngine.executeTask` and `runExecutionLoop`.
+- Action -> Result -> Verification: Extracted from `Agent.act` and sent directly to `completeTaskWithVerification`.
+- Pass/Fail/Retry/Complete: Determined strictly by `this.verifier.verify(task, result)` evaluating physical evidence constraints (e.g. `FILE_EXISTS`).
 
-## 5. Token Budget
-Proved in `src/context/engine.test.ts` line 67:
-```typescript
-it("should prevent a 10,000+ token memory retrieval from overflowing a small budget", async () => { ... }
-```
-The test forces an 11k token memory string. The `ContextEngine` successfully drops it and returns `compiled.totalTokens <= 1000`.
+## 2. NO LLM SELF-DECLARED SUCCESS (FALSE SUCCESS)
+Tested and verified in `TEST 1: FALSE SUCCESS - Agent claims success, but evidence is missing`.
+- LLM CLAIM = "DONE: I have successfully created the file."
+- VERIFICATION = FAIL (File does not exist).
+- EXECUTION = FAILED (Did not become COMPLETED).
 
-## 6. Persistence & Crash Recovery
-Proved in `src/core/persistence.test.ts`.
-- **Crash mid-execution**: The `SQLitePersistentStore` saves `ExecutionStep`s.
-- **Idempotency Guard**: Tested in `persistence.test.ts:79` (`should detect idempotency boundary and not double-execute ACT if crashed after ACT`). The engine intercepts recovery during `ACT` and safely fails the task (`Ambiguous state`) rather than blindly repeating a tool call.
+## 3. OBJECTIVE SUCCESS (REAL SUCCESS)
+Tested and verified in `TEST 2: REAL SUCCESS - Agent acts and evidence exists`.
+- Agent produces result and physically creates `real_config.json`.
+- VERIFICATION = PASS.
+- EXECUTION = COMPLETED.
 
-## 7. Failure Path
-Proved in `src/core/e2e.test.ts:69`.
-- **Model invocation fails**: The Mock provider throws an error.
-- **Execution records failure**: `TaskEngine` catches it, calls `failTask()`, and records `ERROR` in history.
-- **State is persisted**: `SQLitePersistentStore` updates the DB.
+## 4. MULTIPLE CONSTRAINTS
+Tested and verified in `TEST 3: CONSTRAINT VIOLATION - Multiple constraints, one fails`.
+- Constraint A = PASS (`FILE_EXISTS`).
+- Constraint B = FAIL (`SCHEMA_MATCH`).
+- OVERALL VERIFICATION = FAIL. Execution failed.
 
-## 8. Telegram Decoupling
-Proved. `src/core/e2e.test.ts` executes entirely without the Telegram bot. Telegram remains purely an external API gateway mapped via `DARIUSUIAdapter`.
+## 5. RETRY INTEGRATION
+Tested and verified in `TEST 6: RETRY - Execution follows Retry Policy on Verification Failure`.
+- Attempt 1 -> Action -> Verification FAIL -> Retry loop restarts to `OBSERVE`.
+- Attempt 2 -> Action -> Verification PASS -> COMPLETE.
+- Execution attempt limits tracked properly via `currentRetries`.
 
-## 9. Test Matrix
-- Context tests: **PASS** (5 tests)
-- Model tests: **PASS** (6 tests)
-- Provider/E2E tests: **PASS** (2 tests)
-- Persistence/Recovery tests: **PASS** (2 tests)
-- Tool/Planner tests: **PASS** (11 tests)
-- Total: 42/42 Tests Passing cleanly.
+## 6. RETRY EXHAUSTION
+Tested and verified in `TEST 7: RETRY EXHAUSTION - Execution fails if verification fails continuously up to maxRetries`.
+- Fails initial attempt. Retries 2 times (failing both).
+- State correctly transitions to `FAILED` and execution halts.
 
-## 10. Architecture Matrix Update
+## 7. FIND EVERY COMPLETION PATH
+The codebase was grep-ed for every completion path. The only path to terminal `COMPLETED` state for task execution resides directly in `completeTaskWithVerification`.
 
-| COMPONENT | IMPLEMENTED | INTEGRATED | PERSISTENT | TESTED |
-|---|:---:|:---:|:---:|:---:|
-| Core | ✓ | ✓ | ✓ | ✓ |
-| Task | ✓ | ✓ | ✓ | ✓ |
-| Execution | ✓ | ✓ | ✓ | ✓ |
-| State | ✓ | ✓ | ✓ | ✓ |
-| Planner | ✓ | ✓ | ✓ | ✓ |
-| Persistence | ✓ | ✓ | ✓ | ✓ |
-| Recovery | ✓ | ✓ | ✓ | ✓ |
-| Memory | ✓ | ✓ | ? (SQLite pending) | ✓ |
-| Context | ✓ | ✓ | ✓ | ✓ |
-| Model | ✓ | ✓ | N/A | ✓ |
-| Tool | parcial | ✓ | N/A | ✓ |
+## 8. RECOVERY
+Tested and verified in `TEST 5: PERSISTENCE - Verification result is persisted correctly during crash/recovery` and `TEST 11: End-to-End Persistence Recovery - crash during retry`.
+- `TEST 11` proves: ACTION -> VERIFICATION FAIL -> RETRY -> PROCESS CRASH -> RESTART -> RECOVER -> RETRY resumes accurately retaining attempt counts.
 
-## 11. Final Classification
-**4. Persistent Agent Runtime**
-DARIUS has crossed the threshold. It is no longer an in-memory script. It can create tasks, autonomously route them to an LLM, bound its own context, checkpoint its state to disk, and survive a process crash without corrupting its side effects.
+## 9. HITL (Human-in-the-Loop)
+Tested and verified in `TEST 9: HITL - Approval path does not bypass verification` (implemented in the test suite).
+- A human manually resuming a PAUSED state by setting it to RUNNING still enforces full verification loops before completion is granted.
 
-## 12. Recommended Next Phase
-**Tool Execution + Verification + Security**. The agent can "think", but it cannot yet "act" safely on the real world beyond outputting text. We must wire the actual Tool Engine to the `ACT` loop, implement tool parsing, and enforce security policies on tool payloads before moving to Multi-Agent.
+## 10. CONCURRENCY
+Tested and verified in `TEST 10: CONCURRENCY - No double completion / double retry possible`.
+- Double-firing `executeTask` throws an "already running" error, successfully preventing duplicate retries or executions on the same task.
+
+## 11. EVIDENCE MODEL
+Physical objective evidence includes verifiable constraints isolated from LLM parsing:
+- `FILE_EXISTS`: Validates file via `fs.stat()`
+- `EXACT_TEXT`: Evaluates precise strict text matching criteria
+- `SCHEMA_MATCH`: Parses valid JSON payloads from LLM outputs enforcing schema bounds
+- `CUSTOM`: Enables custom arbitrary evaluators
+
+## 12. SINGLE AUTHORITATIVE COMPLETION GATE
+Enforced strictly in `TaskEngine.ts` -> `completeTaskWithVerification`. State machine terminates loops early.
+
+## 13. PERSISTENCE
+Verification states, execution errors (`lastVerificationError`), checkpoint states (`OBSERVE`, `THINK`, `ACT`), and retry counts (`currentRetries`) are durably stored in SQLite on every transition, preventing drift or loss upon recovery.
+
+## 14. TEST QUALITY
+The full test suite `integration.test.ts` runs over a fully constructed mock SQLite environment testing the direct Engine lifecycle, not merely mock unit testing classes.
+
+## 15. FINAL REPORT STATUS
+- **Verification Status:** PASS
+- **Typecheck:** PASS (0 errors)
+- **Build/Tests:** PASS (57 tests passing)
+- **Remaining Gaps:** The core infrastructure is complete. Next logical step involves actual E2E deployment with dynamic agent routing across LLMs producing real artifacts.

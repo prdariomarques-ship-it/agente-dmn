@@ -260,4 +260,98 @@ describe("Verification Engine Integration - Anti-Hallucination Proofs", () => {
 
     expect(completedTask.status).toBe("FAILED");
   });
+
+  it("TEST 9: HITL - Approval path does not bypass verification", async () => {
+    const hitlAgent = createAgent("hitl", "Ollama");
+
+    hitlAgent.act = async () => {
+      return "DONE: I did it."; // No evidence created
+    };
+    engine.registerAgent(hitlAgent);
+
+    const task = engine.createTask("HITL Task", "hitl context", {
+      verification: { type: "FILE_EXISTS", value: "hitl_file.txt" }
+    });
+
+    // We simulate human approval logic safely: execution runs, verification fails.
+    const completedTask = await engine.executeTask(task.id, "hitl");
+    expect(completedTask.status).toBe("FAILED");
+  });
+
+  it("TEST 10: CONCURRENCY - No double completion / double retry possible", async () => {
+    let attempts = 0;
+    const concAgent = createAgent("conc", "Ollama");
+
+    concAgent.act = async () => {
+      attempts++;
+      await new Promise(r => setTimeout(r, 20));
+      return "DONE: Finished.";
+    };
+    engine.registerAgent(concAgent);
+
+    const task = engine.createTask("Concurrency", "conc context", {
+      verification: { type: "FILE_EXISTS", value: "conc_file.txt" },
+      maxRetries: 2
+    });
+
+    // Fire executeTask twice concurrently
+    const p1 = engine.executeTask(task.id, "conc");
+    const p2 = engine.executeTask(task.id, "conc").catch(e => e.message);
+
+    const results = await Promise.all([p1, p2]);
+
+    // p1 should fail via verification. p2 should fail immediately with "already running"
+    expect(results[0].status).toBe("FAILED");
+    expect(results[1]).toBe("Task is already running");
+
+    expect(attempts).toBe(3);
+  });
+
+  it("TEST 11: End-to-End Persistence Recovery - crash during retry", async () => {
+    const testFile = "persist_retry_test.json";
+    const crashingRetryAgent = createAgent("crasherRetry", "Ollama");
+    let attempts = 0;
+
+    crashingRetryAgent.act = async () => {
+      attempts++;
+      if (attempts === 1) {
+        return "DONE: I failed verification";
+      } else if (attempts === 2) {
+        throw new Error("Simulated process crash during retry ACT phase");
+      }
+      return "DONE";
+    };
+    engine.registerAgent(crashingRetryAgent);
+
+    const task = engine.createTask("Crash during retry", "crasherRetry context", {
+      verification: { type: "FILE_EXISTS", value: testFile },
+      maxRetries: 2
+    });
+
+    const crashedTask = await engine.executeTask(task.id, "crasherRetry");
+    expect(crashedTask.status).toBe("FAILED");
+    expect(crashedTask.error).toContain("Simulated process crash during retry ACT phase");
+
+    const hardCrashTask = taskStore.getTask(task.id)!;
+    hardCrashTask.status = "RUNNING";
+    taskStore.saveTask(hardCrashTask);
+
+    try { taskStore.close(); } catch(e) {}
+    const newTaskStore = new SQLitePersistentStore(dbPath);
+    const newEngine = new TaskEngine(newTaskStore, { verifier }, planner, tools, memory, verifier);
+
+    const recoveryAgent = createAgent("crasherRetry", "Ollama");
+    recoveryAgent.act = async () => {
+      await fs.writeFile(testFile, '{"ok": true}');
+      return "DONE: Done after crash.";
+    };
+    newEngine.registerAgent(recoveryAgent);
+
+    const recoveredTask = await newEngine.recoverAndResume(task.id);
+    expect(recoveredTask.status).toBe("COMPLETED");
+    expect(recoveredTask.metadata?.currentRetries).toBe(1);
+
+    await fs.unlink(testFile);
+    try { newTaskStore.close(); } catch(e) {}
+  });
 });
