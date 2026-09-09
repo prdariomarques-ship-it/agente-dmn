@@ -18,7 +18,7 @@ Model                      ✓            ✓ (Router)     ?            N/A     
 Tool                       ✓            parcial        ?            N/A         ✓
 MCP                        ✓            parcial        ?            N/A         ?
 Skills                     ✓            futuro         ?            N/A         —
-Verification               ✓            parcial        ?            —           ?
+Verification               ✓            ✓              ✓            ✓           ✓
 Security                   ✓            parcial        ?            —           ?
 Observability              ✓            parcial        ?            ?           ✓
 ```

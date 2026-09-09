@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Agent, EngineEvent, EngineObserver, ExecutionState, ExecutionStep, ExecutionStore, Task, TaskExecution, TaskStatus, TaskStore } from "./types.js";
+import { VerificationEngine } from "../verification/types.js";
 
 export class InMemoryTaskStore implements TaskStore, ExecutionStore {
   private tasks: Map<string, Task> = new Map();
@@ -40,16 +41,20 @@ export class TaskEngine {
   private agents: Map<string, Agent> = new Map();
   private maxIterations = 10;
   private observers: EngineObserver[] = [];
-
-  // Track active in-memory loops to prevent concurrent loop spawning
   private activeLoops: Set<string> = new Set();
 
-  constructor(store?: TaskStore & ExecutionStore, config?: { maxIterations?: number }) {
+  // Optional verification engine
+  private verifier?: VerificationEngine;
+
+  constructor(store?: TaskStore & ExecutionStore, config?: { maxIterations?: number, verifier?: VerificationEngine }) {
     const inMem = new InMemoryTaskStore();
     this.taskStore = store || inMem;
     this.execStore = store || inMem;
     if (config?.maxIterations) {
       this.maxIterations = config.maxIterations;
+    }
+    if (config?.verifier) {
+      this.verifier = config.verifier;
     }
   }
 
@@ -110,7 +115,6 @@ export class TaskEngine {
       task.status = "RUNNING";
       this.taskStore.saveTask(task);
 
-      // If the loop isn't already active in this process (e.g. we restarted), spawn it
       if (!this.activeLoops.has(taskId)) {
         const execs = this.execStore.getByTaskId(taskId);
         let execution = execs.length > 0 ? execs[0] : null;
@@ -137,7 +141,7 @@ export class TaskEngine {
     const task = this.taskStore.getTask(taskId);
     if (!task) throw new Error(`Task ${taskId} not found`);
     if (task.status === "COMPLETED" || task.status === "FAILED" || task.status === "CANCELLED") {
-      return task; // Already done
+      return task;
     }
 
     if (task.status === "PAUSED") {
@@ -213,7 +217,6 @@ export class TaskEngine {
     if (!agent) throw new Error(`Agent with id ${execution.agentId} not found for recovery`);
 
     if (this.activeLoops.has(task.id)) {
-      // Prevent concurrent loop execution in the same process
       return task;
     }
 
@@ -241,7 +244,7 @@ export class TaskEngine {
         try {
           if (agent.execute && !agent.observe && !agent.think && !agent.act) {
              const result = await agent.execute(task);
-             this.completeTask(task, execution, result);
+             await this.completeTaskWithVerification(task, execution, result);
              if (timeoutId) clearTimeout(timeoutId);
              this.activeLoops.delete(task.id);
              return resolve(task);
@@ -253,7 +256,6 @@ export class TaskEngine {
               if (!wasPaused) {
                 if (timeoutId) clearTimeout(timeoutId);
                 timeoutId = null;
-                // Only write step if we haven't already
                 if (execution.state !== "WAITING_APPROVAL") {
                   this.recordStep(execution, "WAITING_APPROVAL", "Paused waiting for human approval");
                 }
@@ -265,7 +267,7 @@ export class TaskEngine {
                  task.status = "FAILED";
                  task.error = freshTask.error;
               } else if (freshTask && freshTask.status === "RUNNING") {
-                 task.status = "RUNNING"; // Catch resume
+                 task.status = "RUNNING";
               }
               continue;
             }
@@ -276,7 +278,6 @@ export class TaskEngine {
             }
 
             const loopStartTime = Date.now();
-
             const lastState = execution.state;
 
             if (lastState === "OBSERVE") {
@@ -288,6 +289,7 @@ export class TaskEngine {
                this.recordStep(execution, "OBSERVE");
                if (agent.observe) {
                  const obsOutput = await agent.observe(task, execution);
+                 if (isTimeout) return;
                  execution.history[execution.history.length - 1].output = obsOutput;
                  this.execStore.saveExecution(execution);
                }
@@ -297,30 +299,37 @@ export class TaskEngine {
               this.recordStep(execution, "THINK");
               if (agent.think) {
                 const thinkOutput = await agent.think(task, execution);
+                if (isTimeout) return;
                 execution.history[execution.history.length - 1].output = thinkOutput;
                 this.execStore.saveExecution(execution);
               }
             }
 
             let isDone = false;
+            let finalResult = "";
             if (task.status === "RUNNING" && execution.state !== "ERROR") {
               this.recordStep(execution, "ACT");
               if (agent.act) {
                  const actOutput = await agent.act(task, execution);
+                 if (isTimeout) return;
                  execution.history[execution.history.length - 1].output = actOutput;
                  this.execStore.saveExecution(execution);
                  if (actOutput && actOutput.startsWith("DONE:")) {
                     isDone = true;
-                    this.completeTask(task, execution, actOutput.substring(5).trim());
+                    finalResult = actOutput.substring(5).trim();
                  }
               } else {
                  isDone = true;
-                 this.completeTask(task, execution, "Agent completed without act phase");
+                 finalResult = "Agent completed without act phase";
               }
             }
 
             totalRunningTime += (Date.now() - loopStartTime);
-            if (isDone) break;
+
+            if (isDone) {
+              await this.completeTaskWithVerification(task, execution, finalResult);
+              break;
+            }
           }
 
           if (task.status === "RUNNING" && !isTimeout) {
@@ -349,7 +358,20 @@ export class TaskEngine {
     });
   }
 
-  private completeTask(task: Task, execution: TaskExecution, result: string) {
+  private async completeTaskWithVerification(task: Task, execution: TaskExecution, result: string) {
+    if (this.verifier) {
+      this.recordStep(execution, "VERIFY");
+      const vResult = await this.verifier.verify(task, result);
+      execution.history[execution.history.length - 1].output = `Verification: ${vResult.passed ? 'PASS' : 'FAIL'}`;
+      this.execStore.saveExecution(execution);
+
+      if (!vResult.passed) {
+         // Verification failed, we don't complete the task, we fail it to trigger a retry or explicit failure
+         this.failTask(task, execution, `Verification failed: ${vResult.reason}`);
+         return;
+      }
+    }
+
     this.recordStep(execution, "DONE");
     task.status = "COMPLETED";
     task.result = result;

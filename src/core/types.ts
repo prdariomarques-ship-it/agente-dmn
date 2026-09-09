@@ -14,7 +14,8 @@ export type ExecutionState =
   | "ACT"
   | "DONE"
   | "ERROR"
-  | "WAITING_APPROVAL";
+  | "WAITING_APPROVAL"
+  | "VERIFY";
 
 export interface Task {
   id: string;

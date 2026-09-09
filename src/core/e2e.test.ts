@@ -130,4 +130,30 @@ describe("DARIUS End-to-End Execution Flow with Tools", () => {
     expect(actSteps[0].output).toContain("TOOL_ERROR");
     expect(actSteps[0].output).toContain("not allowed by current policy");
   });
+
+  it("should perform VERIFY phase before completion and fail if invalid", async () => {
+    // We inject a SimpleVerificationEngine manually to test this hook
+    const { SimpleVerificationEngine } = await import("../verification/engine.js");
+    const verifier = new SimpleVerificationEngine();
+
+    // Create a new engine instance for this specific test
+    const verifierEngine = new TaskEngine(store, { maxIterations: 5, verifier });
+    verifierEngine.registerAgent(agent);
+
+    const task = verifierEngine.createTask("Test Objective", "ctx", { successCriteria: "must contain 42" });
+
+    // The agent will output 'DONE: Task complete' which doesn't contain 42
+    const finishedTask = await verifierEngine.executeTask(task.id, agent.id);
+
+    expect(finishedTask.status).toBe("FAILED");
+    expect(finishedTask.error).toContain("Verification failed");
+
+    // Check history trace for VERIFY step
+    const execs = store.getByTaskId(task.id);
+    const history = execs[0].history;
+    const verifyStep = history.find(h => h.state === "VERIFY");
+
+    expect(verifyStep).toBeDefined();
+    expect(verifyStep?.output).toBe("Verification: FAIL");
+  });
 });
