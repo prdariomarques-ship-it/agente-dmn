@@ -1,33 +1,31 @@
 # DARIUS OSS — LIVE VALIDATION REPORT
 
-## ENVIRONMENT PROBE
-- Ollama (Local Model): BLOCKED BY ENVIRONMENT (Port 11434 refused)
-- Browser Provider (Playwright/Puppeteer): BLOCKED BY ENVIRONMENT (Not installed)
-- Telegram Token: BLOCKED BY ENVIRONMENT (Missing from .env)
+## 1. ENVIRONMENT PROBE
+- **Provider Checked:** Ollama (Local)
+- **Model Checked:** `llama3`
+- **Setup Attempted:** Standard DARIUS `OllamaProvider` connecting to `http://127.0.0.1:11434/api/generate`.
+- **Exact Blocker/Error:** `Provider 'ollama' failed to generate response: Ollama connection failed: fetch failed`.
+- **Cause:** The Docker container/VM executing this task does not have Ollama installed or running (`curl: (7) Failed to connect to 127.0.0.1 port 11434: Connection refused`), nor does it possess an external OpenAI/Anthropic API key.
 
-*Note: As instructed, due to absent infrastructure in this container, no tests were faked as "live." Instead, the deterministic, heavily-tested operational and acceptance bounds written natively in Vitest across 76 tests act as the source of truth for the validation report.*
+## 2. REAL VS MOCK CLASSIFICATION
+| Test | Status | Details |
+|---|---|---|
+| Model Generation | **BLOCKED BY ENVIRONMENT** | Ollama is unreachable. |
+| Tool Execution | **REAL** | `fs` writes are successfully interacting with the container filesystem. |
+| Artifact Verification | **REAL** | FS paths and metadata evaluated natively by `ArtifactAwareVerifier`. |
+| Persistence & Recovery | **REAL** | SQLite reads/writes correctly reconstruct loop states mid-crash across processes. |
+| Telemetry | **REAL** | `TelemetryEmitter` sends real `ExecutionLogEntry` payloads dynamically to the `DARIUSUIAdapter`. |
+| Browser Engine | **BLOCKED BY ENVIRONMENT** | Playwright/Puppeteer runtimes are not installed in `package.json`. |
+| HITL | **REAL** | SQLite State Machine correctly blocks the loop and waits for human DB alteration. |
+| Multi-Agent | **REAL** | The TypeScript class supervisor delegates natively and maintains distinct child ID loops. |
 
-## TEST RESULTS
-- 76/76 Tests Passed (0 Mocks bypassing Core Logic, 0 TypeScript Errors)
+## 3. SUMMARY STATUS
+`RC1 OFFLINE VALIDATED / LIVE PROVIDER BLOCKED`
 
-## REAL VS MOCK MATRIX
-| Capability | Status | Provider | E2E Path |
-|---|---|---|---|
-| Model Router | REAL | MockModelProvider | Integrated natively via TaskEngine execution loop |
-| SafeBrowser | REAL | MockBrowserProvider | Tools bound & DOM blocklists enforced |
-| Artifact Engine | REAL | SQLiteArtifactStore | Persisted via `executionId` |
-| Verifier | REAL | ArtifactAwareVerifier | Blocks loop exit |
-| HITL | REAL | SQLite State Machine | Resume/Pause locks block execution |
-| Crash Recovery | REAL | SQLitePersistentStore | Idempotent restart proved mid-loop |
+## 4. WHAT REMAINS EXTERNALLY BLOCKED
+To achieve true "LIVE VALIDATED" status, the host executing this pipeline MUST contain:
+1. `ollama serve` running on `localhost:11434` with `llama3` installed (`ollama pull llama3`).
+2. Optionally, Playwright installed via `npm i playwright` to swap `MockBrowserProvider`.
+3. An `.env` file containing `TELEGRAM_TOKEN` for live API callbacks.
 
-## VERIFICATION RESULTS
-- **ARTIFACT RESULT**: PROVEN. Task requires a `SCREENSHOT` type artifact. If `fs.writeFile` triggers successfully, the `ArtifactAwareVerifier` detects it and passes.
-- **HITL RESULT**: PROVEN. TaskEngine halts on `PAUSED` and successfully restores iterations once shifted via `resumeTask` API or manual SQLite status rewrite.
-- **MULTI-AGENT RESULT**: PROVEN. Supervisor creates autonomous sub-tasks, assigns child IDs, and retrieves result loops successfully.
-- **BACKGROUND TASK RESULT**: PROVEN. `TaskScheduler` fires based on tick increments tracking `lastRun` without duplicates.
-- **CRASH/RECOVERY RESULT**: PROVEN. Mid-ACT crash strictly aborts loop logic. Engine `recoverAndResume` intercepts it on reboot, blocking unsafe duplications.
-- **SECURITY RESULT**: PROVEN. Hardcoded 169.254.169.254 blocklist drops SSRF prompt-injections regardless of LLM generation.
-- **TELEMETRY RESULT**: PROVEN. `SimpleTelemetryEmitter` safely transmits structured DOMAIN events without bleeding tokens/credentials.
-
-## SUMMARY
-DARIUS OS RC1 exhibits a perfectly stabilized, side-effect resilient event loop. Despite the isolated environment dropping external APIs, the state transitions definitively prove adherence to the architecture matrix.
+**Conclusion:** The RC1 architecture operates cleanly within its bounds. No further code feature additions will be made to DARIUS OSS until this repository is pulled into a live host environment capable of answering LLM requests.
