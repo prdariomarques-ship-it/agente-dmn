@@ -86,4 +86,31 @@ describe("SimpleContextEngine", () => {
     expect(memoryChunks.length).toBeLessThan(3);
     expect(compiled.totalTokens).toBeLessThanOrEqual(40);
   });
+
+  it("should prevent a 10,000+ token memory retrieval from overflowing a small budget", async () => {
+    // Generate a massive string (>10,000 tokens)
+    const massiveContent = "A".repeat(45000);
+
+    await memoryStore.save({ type: "SEMANTIC", content: massiveContent, relevanceScore: 0.9 });
+
+    // Set a strict budget
+    contextEngine = new SimpleContextEngine(memoryStore, { maxTokens: 1000, relevanceThreshold: 0, includeHistory: false, maxHistorySteps: 0 });
+
+    const compiled = await contextEngine.buildContext(dummyTask, { ...dummyExecution, history: [] }, "Test");
+
+    // The giant memory should have been blocked/truncated
+    expect(compiled.totalTokens).toBeLessThanOrEqual(1000);
+    const memoryChunks = compiled.chunks.filter(c => c.source === "MEMORY");
+    expect(memoryChunks.length).toBe(0); // It completely skips the chunk if it exceeds bounds in this naive MVP
+  });
+
+  it("should always preserve critical Task Information even if budget is tight", async () => {
+    const tightEngine = new SimpleContextEngine(memoryStore, { maxTokens: 10, relevanceThreshold: 0, includeHistory: false, maxHistorySteps: 0 });
+    const compiled = await tightEngine.buildContext(dummyTask, dummyExecution, "Test");
+
+    // Task source chunk is added FIRST in priority, so it must exist even if it alone exceeds the 'maxTokens'
+    const taskChunk = compiled.chunks.find(c => c.source === "TASK");
+    expect(taskChunk).toBeDefined();
+    expect(taskChunk?.content).toContain("Test objective");
+  });
 });
