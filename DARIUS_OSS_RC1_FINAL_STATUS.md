@@ -24,6 +24,9 @@ No active REST/Ollama provider or OpenRouter endpoint was available in the conta
 - Direct raw LLM token streaming handling and structural `<TOOL_CALL>` parsing against live stochastic weights.
 - Playwright/Puppeteer live DOM extraction edge-cases.
 
+**CRITICAL NOTE: OFFLINE VALIDATION ≠ LIVE MODEL VALIDATION.**
+Do not claim that a real LLM provider was successfully exercised. The current environment had no active REST/Ollama binding.
+
 ## KNOWN LIMITATIONS
 - Provider configurations strictly map to Mock arrays locally to prevent timeout cascades within Vitest.
 - `MemoryStore` remains an InMemory interface lacking Semantic Vector DB integration mappings.
