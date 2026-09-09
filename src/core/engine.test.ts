@@ -40,7 +40,7 @@ describe("TaskEngine Loop Enhancements", () => {
 
   beforeEach(() => {
     store = new InMemoryTaskStore();
-    engine = new TaskEngine(store, { maxIterations: 3 });
+    engine = new TaskEngine(store, { maxIterations: 3 } as any);
     engine.registerAgent(simpleAgent);
     engine.registerAgent(loopingAgent);
     engine.registerAgent(failingLoopAgent);

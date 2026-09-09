@@ -137,7 +137,7 @@ describe("DARIUS End-to-End Execution Flow with Tools", () => {
     const verifier = new DeterministicVerificationEngine();
 
     // Create a new engine instance for this specific test
-    const verifierEngine = new TaskEngine(store, { maxIterations: 5, verifier });
+    const verifierEngine = new TaskEngine(store, { maxIterations: 5, verifier } as any);
     verifierEngine.registerAgent(agent);
 
     const task = verifierEngine.createTask("Test Objective", "ctx", { successCriteria: "must contain 42" });

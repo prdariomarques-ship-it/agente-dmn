@@ -342,9 +342,9 @@ export class TaskEngine {
                 break;
               } else {
                 // Retry scenario: Reset state for next iteration
-                execution.state = "OBSERVE";
+                execution.state = "IDLE"; // Reset to IDLE so it starts fresh from OBSERVE
                 execution.history.push({
-                   state: "OBSERVE",
+                   state: "IDLE",
                    timestamp: new Date()
                 });
                 task.status = "RUNNING"; // Keep it running if it's a retry
