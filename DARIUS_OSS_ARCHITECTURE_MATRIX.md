@@ -12,12 +12,12 @@ State                      ✓            ✓              ?            ✓     
 Planner                    ✓            ✓              ?            ✓           ✓
 Persistence                ✓            ✓              ?            ✓           ✓
 Recovery                   ✓            ✓              ?            ✓           ✓
-Memory                     ✓            ✓              ?            ?           ✓
+Memory                     ✓            ✓              ✓            parcial     ✓
 Context                    ✓            ✓              ✓            ✓           ✓
-Model                      ✓            ✓ (Router)     ?            N/A         ✓
-Tool                       ✓            parcial        ?            N/A         ✓
+Model                      ✓            ✓ (Router)     ✓            N/A         ✓
+Tool                       ✓            ✓              ✓            N/A         ✓
 MCP                        ✓            parcial        ?            N/A         ?
-Skills                     ✓            futuro         ?            N/A         —
+Skills                     ✓            ✓              ?            N/A         ✓
 Verification               ✓            ✓              ✓            ✓           ✓
 Security                   ✓            parcial        ?            —           ?
 Observability              ✓            parcial        ?            ?           ✓
