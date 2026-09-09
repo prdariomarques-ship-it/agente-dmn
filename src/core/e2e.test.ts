@@ -132,9 +132,9 @@ describe("DARIUS End-to-End Execution Flow with Tools", () => {
   });
 
   it("should perform VERIFY phase before completion and fail if invalid", async () => {
-    // We inject a SimpleVerificationEngine manually to test this hook
-    const { SimpleVerificationEngine } = await import("../verification/engine.js");
-    const verifier = new SimpleVerificationEngine();
+    // We inject a DeterministicVerificationEngine manually to test this hook
+    const { DeterministicVerificationEngine } = await import("../verification/engine.js");
+    const verifier = new DeterministicVerificationEngine();
 
     // Create a new engine instance for this specific test
     const verifierEngine = new TaskEngine(store, { maxIterations: 5, verifier });

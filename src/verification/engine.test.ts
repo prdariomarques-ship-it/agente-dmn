@@ -1,9 +1,15 @@
-import { describe, expect, it } from "vitest";
-import { SimpleVerificationEngine } from "./engine.js";
+import { describe, expect, it, beforeEach, afterEach } from "vitest";
+import { DeterministicVerificationEngine } from "./engine.js";
 import { Task } from "../core/types.js";
+import fs from "fs/promises";
+import fsSync from "fs";
 
-describe("SimpleVerificationEngine", () => {
-  const verifier = new SimpleVerificationEngine();
+describe("DeterministicVerificationEngine", () => {
+  let verifier: DeterministicVerificationEngine;
+
+  beforeEach(() => {
+    verifier = new DeterministicVerificationEngine();
+  });
 
   const dummyTask: Task = {
     id: "task-verify",
@@ -13,30 +19,64 @@ describe("SimpleVerificationEngine", () => {
     updatedAt: new Date()
   };
 
-  it("should pass automatically if no success criteria is provided", async () => {
+  it("should pass automatically if no verification criteria are provided", async () => {
     const result = await verifier.verify(dummyTask, "I did a thing");
     expect(result.passed).toBe(true);
   });
 
-  it("should pass if the result satisfies the success criteria text", async () => {
+  it("TEST 1 - VALID SUCCESS: Should check deterministic physical evidence (FILE_EXISTS) and pass", async () => {
+    const testFile = "test_verification.txt";
+    await fs.writeFile(testFile, "hello");
+
     const taskWithCriteria: Task = {
       ...dummyTask,
-      metadata: { successCriteria: "The secret code must contain 42" }
+      metadata: { verification: { type: "FILE_EXISTS", value: testFile } }
     };
 
-    // Heuristic string matching built into the SimpleVerifier MVP
-    const result = await verifier.verify(taskWithCriteria, "The answer is 42");
+    // Even if LLM says "banana", it only cares about the file existing
+    const result = await verifier.verify(taskWithCriteria, "Agent: banana");
     expect(result.passed).toBe(true);
+
+    await fs.unlink(testFile);
   });
 
-  it("should fail if the result does not satisfy the criteria", async () => {
+  it("TEST 2 - FALSE SUCCESS: Should reject if LLM claims success but evidence is missing", async () => {
     const taskWithCriteria: Task = {
       ...dummyTask,
-      metadata: { successCriteria: "must contain 42" }
+      metadata: { verification: { type: "FILE_EXISTS", value: "non_existent_file.txt" } }
     };
 
-    const result = await verifier.verify(taskWithCriteria, "The answer is banana");
+    // LLM lies
+    const result = await verifier.verify(taskWithCriteria, "DONE: I successfully created the file.");
+
     expect(result.passed).toBe(false);
-    expect(result.reason).toContain("did not satisfy the success criteria");
+    expect(result.reason).toContain("File does not exist: non_existent_file.txt");
+  });
+
+  it("TEST 3 - MISSING RESULT: Should reject if expected schema is missing from output", async () => {
+    const taskWithCriteria: Task = {
+      ...dummyTask,
+      metadata: { verification: { type: "SCHEMA_MATCH", value: ["id", "status"] } }
+    };
+
+    // Missing 'status' key
+    const result = await verifier.verify(taskWithCriteria, 'DONE: {"id": 123}');
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("Schema missing required key: status");
+  });
+
+  it("TEST 4 - VERIFICATION ERROR: Should gracefully fail if custom verification throws an exception", async () => {
+    verifier.registerCustomVerifier("unstable", async () => {
+       throw new Error("API completely down");
+    });
+
+    const taskWithCriteria: Task = {
+      ...dummyTask,
+      metadata: { verification: { type: "CUSTOM", customVerifierId: "unstable", value: null } }
+    };
+
+    const result = await verifier.verify(taskWithCriteria, "DONE");
+    expect(result.passed).toBe(false);
+    expect(result.reason).toContain("Verification execution error: API completely down");
   });
 });
