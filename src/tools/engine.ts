@@ -25,7 +25,7 @@ export class SimpleToolEngine implements ToolEngine {
     }));
   }
 
-  async executeTool(name: string, params: Record<string, unknown>): Promise<string | Record<string, unknown>> {
+  async executeTool(name: string, params: Record<string, unknown>, context?: { taskId?: string; executionId?: string }): Promise<string | Record<string, unknown>> {
     const tool = this.tools.get(name);
     if (!tool) {
       throw new Error(`Tool not found: ${name}`);
@@ -44,7 +44,7 @@ export class SimpleToolEngine implements ToolEngine {
     }
 
     try {
-      return await tool.execute(params);
+      return await tool.execute(params, context);
     } catch (error) {
       throw new Error(`Error executing tool '${name}': ${error instanceof Error ? error.message : String(error)}`);
     }

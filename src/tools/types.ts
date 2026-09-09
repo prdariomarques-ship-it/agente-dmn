@@ -8,7 +8,7 @@ export interface ToolDefinition {
 }
 
 export interface Tool extends ToolDefinition {
-  execute(params: Record<string, unknown>): Promise<string | Record<string, unknown>>;
+  execute(params: Record<string, unknown>, context?: { taskId?: string; executionId?: string }): Promise<string | Record<string, unknown>>;
   validate?(params: Record<string, unknown>): boolean;
 }
 
@@ -20,6 +20,6 @@ export interface ToolEngineConfig {
 export interface ToolEngine {
   register(tool: Tool): void;
   getTool(name: string): Tool | undefined;
-  executeTool(name: string, params: Record<string, unknown>): Promise<string | Record<string, unknown>>;
+  executeTool(name: string, params: Record<string, unknown>, context?: { taskId?: string; executionId?: string }): Promise<string | Record<string, unknown>>;
   listTools?(): ToolDefinition[];
 }

@@ -55,7 +55,7 @@ export class AutonomousAgent implements Agent {
          const jsonStr = llmOutput.split("TOOL_CALL:")[1].trim();
          const callDef = JSON.parse(jsonStr);
          if (callDef.name && callDef.params) {
-            const result = await this.toolEngine.executeTool(callDef.name, callDef.params);
+            const result = await this.toolEngine.executeTool(callDef.name, callDef.params, { taskId: task.id, executionId: context.id });
             return `TOOL_RESULT [${callDef.name}]: ${JSON.stringify(result)}`;
          }
        } catch (e) {
