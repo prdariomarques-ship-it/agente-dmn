@@ -40,3 +40,23 @@ A topologia de rede neste ambiente falha imediatamente no `Network Probe`. Nenhu
 | Artifact | BLOCKED |
 | Recovery | BLOCKED |
 | Telemetry/UI | BLOCKED |
+
+
+## EXTERNAL LIVE ENVIRONMENT PRE-REQUISITES
+Para continuar o fluxo E2E operacional de forma válida fora deste Sandbox, a infraestrutura destino obrigatoriamente deve prover:
+
+1. **DARIUS RC1 Executável:** O runtime rodando a partir da tag oficial congelada `v0.1.0-rc.1` sem quaisquer modificações ou adições no `src/core`.
+2. **Endpoint Acessível:** Interface de entrada ativa para recepção e escuta das requisições ao DARIUS (e.g., bot do Telegram levantado).
+3. **Stitch Acessível:** Instância operante da interface de Dashboard pronta para consumir o `TelemetryEmitter`.
+4. **Proxy/Network Route:** Uma topologia de rede aberta permitindo as requisições HTTP entre o Stitch, o DARIUS e o Provider.
+5. **Provider Real:** Uma infraestrutura ativa processando tokens REST, sem hardcode (e.g. instanciado localmente ou exposto via container mesh).
+6. **Modelo Disponível:** O payload do `OllamaProvider` espera, por padrão, o modelo `llama3`. Caso seja outro, o DARIUS deve ser instanciado com o `request.modelName` ajustado.
+7. **Configuração Segura:** `TELEGRAM_TOKEN` (e chaves do provider se mudadas de Ollama para OpenAI/Anthropic) injetadas de forma segura via Env Vars no boot.
+8. **Persistência Acessível:** Um volume persistente (bind mount em Docker ou permissões de RW FS direto) mapeado para que a SQLite `TaskStore` crie seus checkpoints de forma atômica sobrevivendo ao ciclo de vida do container.
+
+## SEQUENCE PARA VALIDAÇÃO LIVE
+1. Acionar Boot limpo no host, validando logs do `TelemetryEmitter` via stdout ou websocket mapping pro Stitch.
+2. Interceptar a chamada base: DARIUS → PROXY → MODEL.
+3. Despachar a primeira task pelo Telegram/API: `Create a text file saying hello.`
+4. Observar a emissão do `TOOL_CALL` e a conclusão determinística do Gate de Verificação (`FILE_EXISTS`).
+5. (Opcional) Matar o container mid-task, religar e observar a mágica da recuperação de iterador pelo SQLite.

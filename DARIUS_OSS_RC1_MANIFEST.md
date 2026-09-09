@@ -4,7 +4,7 @@
 v0.1.0-rc.1
 
 ## COMMIT SHA
-b36a02bf3e19dee6dd674f71988130e8eaa568f2
+f833d43dfcda5b528524039ab61c8d457fe9db61
 
 ## ARCHITECTURE SUMMARY
 DARIUS OSS is a local-first, modular Agent Operating System. The canonical TypeScript Core Runtime securely isolates Task objectives from Agent Executions, enforces strictly bounded Context mapping before Model generation, and rigorously evaluates physical verification constraints before completion.
