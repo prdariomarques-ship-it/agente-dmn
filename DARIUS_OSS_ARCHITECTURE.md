@@ -91,3 +91,22 @@ Procedural knowledge structured and loaded on demand.
 
 ### 9. VERIFICATION & SECURITY
 Explicitly validates outcomes and enforces Least Privilege, sandbox isolation, and Human-in-the-Loop (HITL) approval gates.
+
+
+---
+
+### EVIDENCE MODEL & VERIFICATION LAYER
+**Authority:** The Agent/Model is never the authority that determines task completion. The authoritative chain is:
+1. Agent proposes result (ACT).
+2. Tools or system state produces physical/digital evidence.
+3. VerificationEngine evaluates constraints against the evidence.
+4. Core accepts (COMPLETED) or rejects (FAILED / RETRY).
+
+**Evidence Model:**
+Physical evidence includes verifiable, observable changes in the runtime environment:
+- `FILE_EXISTS`: A file is physically present on the file system.
+- `SCHEMA_MATCH`: Output strictly matches a required JSON schema/structure.
+- `EXACT_TEXT`: The output string possesses exactly a predefined substring/signature.
+- `CUSTOM`: Pluggable arbitrary verifications (HTTP status, database presence, etc.).
+
+Verification cannot be bypassed. The TaskEngine strictly gates transition from `RUNNING` to `COMPLETED` via the `completeTaskWithVerification` step.

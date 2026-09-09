@@ -46,7 +46,7 @@ export class TaskEngine {
   // Optional verification engine
   private verifier?: VerificationEngine;
 
-  constructor(store?: TaskStore & ExecutionStore, config?: { maxIterations?: number, verifier?: VerificationEngine }) {
+  constructor(store?: TaskStore & ExecutionStore, config?: { maxIterations?: number, verifier?: VerificationEngine }, planner?: any, tools?: any, memory?: any, verifier?: VerificationEngine) {
     const inMem = new InMemoryTaskStore();
     this.taskStore = store || inMem;
     this.execStore = store || inMem;
@@ -55,6 +55,9 @@ export class TaskEngine {
     }
     if (config?.verifier) {
       this.verifier = config.verifier;
+    }
+    if (verifier) {
+      this.verifier = verifier;
     }
   }
 
@@ -242,9 +245,16 @@ export class TaskEngine {
 
       const runLoop = async () => {
         try {
-          if (agent.execute && !agent.observe && !agent.think && !agent.act) {
-             const result = await agent.execute(task);
-             await this.completeTaskWithVerification(task, execution, result);
+          if (agent.execute && (!agent.observe || !agent.think || !agent.act)) {
+             let isDone = false;
+             while (!isDone && (execution.iterations < execution.maxIterations)) {
+               execution.iterations++;
+               const result = await agent.execute(task);
+               isDone = await this.completeTaskWithVerification(task, execution, result);
+             }
+             if (!isDone && task.status === "RUNNING") {
+                this.failTask(task, execution, "Exceeded maximum iterations without completing");
+             }
              if (timeoutId) clearTimeout(timeoutId);
              this.activeLoops.delete(task.id);
              return resolve(task);
@@ -327,8 +337,21 @@ export class TaskEngine {
             totalRunningTime += (Date.now() - loopStartTime);
 
             if (isDone) {
-              await this.completeTaskWithVerification(task, execution, finalResult);
-              break;
+              const shouldTerminate = await this.completeTaskWithVerification(task, execution, finalResult);
+              if (shouldTerminate) {
+                break;
+              } else {
+                // Retry scenario: Reset state for next iteration
+                execution.state = "OBSERVE";
+                execution.history.push({
+                   state: "OBSERVE",
+                   timestamp: new Date()
+                });
+                task.status = "RUNNING"; // Keep it running if it's a retry
+                this.taskStore.saveTask(task);
+                // Also reset isDone for the loop
+                isDone = false;
+              }
             }
           }
 
@@ -358,7 +381,7 @@ export class TaskEngine {
     });
   }
 
-  private async completeTaskWithVerification(task: Task, execution: TaskExecution, result: string) {
+  private async completeTaskWithVerification(task: Task, execution: TaskExecution, result: string): Promise<boolean> {
     if (this.verifier) {
       this.recordStep(execution, "VERIFY");
       const vResult = await this.verifier.verify(task, result);
@@ -366,9 +389,23 @@ export class TaskEngine {
       this.execStore.saveExecution(execution);
 
       if (!vResult.passed) {
-         // Verification failed, we don't complete the task, we fail it to trigger a retry or explicit failure
+         // Check for retry policy
+         const maxRetries = (task.metadata?.maxRetries as number) ?? 0;
+         const currentRetries = (task.metadata?.currentRetries as number) ?? 0;
+
+         if (currentRetries < maxRetries) {
+           task.metadata = {
+             ...task.metadata,
+             currentRetries: currentRetries + 1,
+             lastVerificationError: vResult.reason
+           };
+           this.taskStore.saveTask(task);
+           return false; // Tells the execution loop to retry
+         }
+
+         // Verification failed and no more retries, fail the task
          this.failTask(task, execution, `Verification failed: ${vResult.reason}`);
-         return;
+         return true; // Execution loop should terminate
       }
     }
 
@@ -379,6 +416,7 @@ export class TaskEngine {
     task.updatedAt = new Date();
     this.taskStore.saveTask(task);
     this.emit({ type: "TASK_COMPLETED", taskId: task.id, timestamp: new Date(), payload: { result } });
+    return true; // Execution loop should terminate
   }
 
   private failTask(task: Task, execution: TaskExecution, errorMsg: string) {
