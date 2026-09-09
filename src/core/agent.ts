@@ -1,12 +1,8 @@
 import { Agent, Task, TaskExecution } from "./types.js";
 import { ContextEngine } from "../context/types.js";
 import { ModelRouter } from "../model/types.js";
+import { ToolEngine } from "../tools/types.js";
 
-/**
- * AutonomousAgent represents an end-to-end connected Agent that implements the
- * Observe -> Think -> Act loop using the canonical DARIUS components:
- * It pulls Context from the ContextEngine and generates responses via the ModelRouter.
- */
 export class AutonomousAgent implements Agent {
   public id: string;
   public name: string;
@@ -16,6 +12,7 @@ export class AutonomousAgent implements Agent {
     name: string,
     private contextEngine: ContextEngine,
     private modelRouter: ModelRouter,
+    private toolEngine?: ToolEngine,
     public description?: string
   ) {
     this.id = id;
@@ -23,39 +20,49 @@ export class AutonomousAgent implements Agent {
   }
 
   async observe(task: Task, context: TaskExecution): Promise<string> {
-    // In Phase 5/6, Observe might involve pulling from tools/browser directly.
-    // For now, it compiles the environmental state.
     const compiled = await this.contextEngine.buildContext(task, context, "observation");
-
-    // We can query the LLM to summarize the observation, or just return basic state.
-    // To save tokens, we simply return the system's current awareness.
     return `Agent ${this.name} initialized observe cycle ${context.iterations}.`;
   }
 
   async think(task: Task, context: TaskExecution): Promise<string> {
-    // Build the context prompt
     const compiledContext = await this.contextEngine.buildContext(task, context, "planning");
-
-    // Use the model to reason about the next step
     const response = await this.modelRouter.route({
       context: compiledContext,
-      temperature: 0.7, // Higher temp for creative thinking
+      temperature: 0.7,
     });
-
     return response.text;
   }
 
   async act(task: Task, context: TaskExecution): Promise<string> {
-    // Build context with strict intent to generate an action/tool call
     const compiledContext = await this.contextEngine.buildContext(task, context, "action");
 
-    // In a future tool implementation, we would append Tool schemas to the context here
+    // Naive tool schema injection for MVP
+    if (this.toolEngine) {
+       compiledContext.fullPrompt += "\n\nAvailable tools: " + JSON.stringify(this.toolEngine.listTools ? this.toolEngine.listTools() : "toolEngine defined");
+    }
+
     const response = await this.modelRouter.route({
       context: compiledContext,
-      temperature: 0.2, // Lower temp for deterministic tool calling/actions
+      temperature: 0.2,
     });
 
-    // If the model decides the objective is met, it should output DONE: <result>
-    return response.text;
+    const llmOutput = response.text;
+
+    // Check if output is a tool call. For this MVP, we assume a simple JSON syntax:
+    // TOOL_CALL: {"name": "calculator", "params": {"a": 1, "b": 2}}
+    if (this.toolEngine && llmOutput.includes("TOOL_CALL:")) {
+       try {
+         const jsonStr = llmOutput.split("TOOL_CALL:")[1].trim();
+         const callDef = JSON.parse(jsonStr);
+         if (callDef.name && callDef.params) {
+            const result = await this.toolEngine.executeTool(callDef.name, callDef.params);
+            return `TOOL_RESULT [${callDef.name}]: ${JSON.stringify(result)}`;
+         }
+       } catch (e) {
+         return `TOOL_ERROR: Failed to parse or execute tool call. ${(e as Error).message}`;
+       }
+    }
+
+    return llmOutput;
   }
 }

@@ -21,4 +21,5 @@ export interface ToolEngine {
   register(tool: Tool): void;
   getTool(name: string): Tool | undefined;
   executeTool(name: string, params: Record<string, unknown>): Promise<string | Record<string, unknown>>;
+  listTools?(): ToolDefinition[];
 }

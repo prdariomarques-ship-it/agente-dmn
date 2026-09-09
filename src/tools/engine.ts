@@ -1,4 +1,4 @@
-import { Tool, ToolEngine, ToolEngineConfig } from "./types.js";
+import { Tool, ToolEngine, ToolEngineConfig, ToolDefinition } from "./types.js";
 
 export class SimpleToolEngine implements ToolEngine {
   private tools: Map<string, Tool> = new Map();
@@ -14,6 +14,15 @@ export class SimpleToolEngine implements ToolEngine {
 
   getTool(name: string): Tool | undefined {
     return this.tools.get(name);
+  }
+
+  listTools(): ToolDefinition[] {
+    return Array.from(this.tools.values()).map(t => ({
+      name: t.name,
+      description: t.description,
+      risk: t.risk,
+      schema: t.schema
+    }));
   }
 
   async executeTool(name: string, params: Record<string, unknown>): Promise<string | Record<string, unknown>> {

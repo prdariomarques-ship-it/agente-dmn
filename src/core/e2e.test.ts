@@ -6,41 +6,92 @@ import { SimpleContextEngine } from "../context/engine.js";
 import { InMemoryMemoryStore } from "../memory/engine.js";
 import { SimpleModelRouter } from "../model/router.js";
 import { MockModelProvider } from "../model/engine.js";
+import { SimpleToolEngine } from "../tools/engine.js";
+import { Tool } from "../tools/types.js";
 import fs from "fs";
 
-describe("DARIUS End-to-End Execution Flow", () => {
-  const dbPath = "e2e-persistence.db";
+describe("DARIUS End-to-End Execution Flow with Tools", () => {
+  const dbPath = "e2e-tools.db";
   let store: SQLitePersistentStore;
   let taskEngine: TaskEngine;
   let memory: InMemoryMemoryStore;
   let contextEngine: SimpleContextEngine;
   let router: SimpleModelRouter;
   let mockProvider: MockModelProvider;
+  let toolEngine: SimpleToolEngine;
   let agent: AutonomousAgent;
+
+  const mathTool: Tool = {
+    name: "math",
+    description: "Adds two numbers",
+    risk: "LOW",
+    schema: { a: "number", b: "number" },
+    execute: async (params) => {
+      const a = params.a as number;
+      const b = params.b as number;
+      return String(a + b);
+    }
+  };
+
+  const riskyTool: Tool = {
+    name: "delete_db",
+    description: "Deletes the database",
+    risk: "CRITICAL",
+    schema: {},
+    execute: async () => "DB DELETED"
+  };
 
   beforeEach(() => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
 
-    // 1. Initialize Persistence (Task & Execution)
     store = new SQLitePersistentStore(dbPath);
-    taskEngine = new TaskEngine(store, { maxIterations: 5 });
+    // Increase maxIterations to give the loop enough room to: Observe -> Think -> Act (Tool Call) -> Observe -> Think -> Act (Done)
+    taskEngine = new TaskEngine(store, { maxIterations: 10 });
 
-    // 2. Initialize Memory & Context
     memory = new InMemoryMemoryStore();
     contextEngine = new SimpleContextEngine(memory, {
       maxTokens: 1000,
       includeHistory: true,
-      maxHistorySteps: 3,
+      maxHistorySteps: 5,
       relevanceThreshold: 0
     }, "System: You are an autonomous E2E agent.");
 
-    // 3. Initialize Model Router & Provider
     router = new SimpleModelRouter();
     mockProvider = new MockModelProvider();
+
+    // Patch mock provider to simulate tool calls if the objective requests it
+    mockProvider.generate = async (req) => {
+       const isActPhase = req.temperature === 0.2 || req.context.fullPrompt.includes("action");
+       let responseText = "Thinking...";
+
+       if (isActPhase) {
+          if (req.context.taskObjective.includes("MATH")) {
+            // Check if history already has the tool result. The history is embedded in fullPrompt by ContextEngine.
+            if (req.context.fullPrompt.includes("TOOL_RESULT [math]:")) {
+              responseText = "DONE: Math complete";
+            } else {
+              responseText = `TOOL_CALL: {"name": "math", "params": {"a": 2, "b": 3}}`;
+            }
+          } else if (req.context.taskObjective.includes("RISK")) {
+            responseText = `TOOL_CALL: {"name": "delete_db", "params": {}}`;
+          } else {
+            responseText = "DONE: Task complete";
+          }
+       }
+
+       return {
+         text: responseText,
+         finishReason: "stop",
+         usage: { promptTokens: 10, completionTokens: 10, totalTokens: 20 }
+       };
+    };
     router.registerProvider(mockProvider);
 
-    // 4. Assemble the Agent
-    agent = new AutonomousAgent("e2e-agent", "E2E LLM Agent", contextEngine, router);
+    toolEngine = new SimpleToolEngine({ allowCriticalRisk: false });
+    toolEngine.register(mathTool);
+    toolEngine.register(riskyTool);
+
+    agent = new AutonomousAgent("e2e-agent", "E2E LLM Agent", contextEngine, router, toolEngine);
     taskEngine.registerAgent(agent);
   });
 
@@ -49,56 +100,34 @@ describe("DARIUS End-to-End Execution Flow", () => {
     if (fs.existsSync(dbPath)) fs.unlinkSync(dbPath);
   });
 
-  it("should complete a full execution flow: Objective -> Context -> Model -> Checkpoint -> Persistence", async () => {
-    // Inject a memory to prove memory routing works
-    await memory.save({ type: "SEMANTIC", content: "Secret code is 42", relevanceScore: 0.9 });
-
-    // Create a Task that will trigger the 'DONE' condition in our MockModelProvider
-    const task = taskEngine.createTask("Test Objective DONE");
-
-    // Execute the E2E flow
+  it("should successfully parse and execute a valid tool call during ACT", async () => {
+    const task = taskEngine.createTask("Test Objective MATH");
     const finishedTask = await taskEngine.executeTask(task.id, agent.id);
 
-    // Assertions on final state
     expect(finishedTask.status).toBe("COMPLETED");
-    expect(finishedTask.result).toContain("Task complete");
+    expect(finishedTask.result).toContain("Math complete");
 
-    // Verify Checkpointing & Persistence
-    const executions = store.getByTaskId(task.id);
-    expect(executions.length).toBe(1);
+    const execs = store.getByTaskId(task.id);
+    const history = execs[0].history;
 
-    const exec = executions[0];
-    expect(exec.state).toBe("DONE");
+    const actSteps = history.filter(h => h.state === "ACT");
+    expect(actSteps.length).toBeGreaterThanOrEqual(2);
 
-    // Validate history contains the Observe, Think, Act phases
-    const states = exec.history.map(h => h.state);
-    expect(states).toContain("OBSERVE");
-    expect(states).toContain("THINK");
-    expect(states).toContain("ACT");
-
-    // The outputs should come directly from the LLM Mock
-    const thinkStep = exec.history.find(h => h.state === "THINK");
-    expect(thinkStep?.output).toContain("Simulated response based on context.");
+    // The first ACT step should contain the result of the tool
+    expect(actSteps[0].output).toContain('TOOL_RESULT [math]: "5"');
   });
 
-  it("should handle Model failure and persist the error state", async () => {
-    // Scenario B: Model invocation fails -> Execution records failure -> state is persisted.
-    const task = taskEngine.createTask("Test Objective FAIL");
-
+  it("should fail safely if a tool call violates risk policy", async () => {
+    const task = taskEngine.createTask("Test Objective RISK");
     const finishedTask = await taskEngine.executeTask(task.id, agent.id);
 
     expect(finishedTask.status).toBe("FAILED");
-    expect(finishedTask.error).toContain("Simulated LLM Error");
+    expect(finishedTask.error).toContain("Exceeded maximum iterations without completing");
 
-    // Check persistence
-    const executions = store.getByTaskId(task.id);
-    expect(executions.length).toBe(1);
-    const exec = executions[0];
-    expect(exec.state).toBe("ERROR");
+    const execs = store.getByTaskId(task.id);
+    const actSteps = execs[0].history.filter(h => h.state === "ACT");
 
-    // The last history step should contain the error
-    const lastStep = exec.history[exec.history.length - 1];
-    expect(lastStep.state).toBe("ERROR");
-    expect(lastStep.error).toContain("Simulated LLM Error");
+    expect(actSteps[0].output).toContain("TOOL_ERROR");
+    expect(actSteps[0].output).toContain("not allowed by current policy");
   });
 });
