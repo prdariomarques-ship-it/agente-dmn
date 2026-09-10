@@ -160,7 +160,7 @@ export class DARIUSUIAdapter implements EngineObserver {
     const session = await this.memoryStore.search({ type: "SESSION" });
     const longTerm = await this.memoryStore.search({ type: "LONG_TERM" });
 
-    const all = [...shortTerm, ...session, ...longTerm].sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+    const all = [...shortTerm, ...session, ...longTerm].sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 
     return {
       stats: {
