@@ -67,7 +67,7 @@ export interface ExecutionLogEntry {
   taskId: string;
   executionId: string;
   timestamp: Date;
-  eventType: "OBSERVE" | "THINK" | "ACT" | "TOOL_CALL" | "ERROR" | "RETRY" | "APPROVAL_REQUEST" | "PENDING";
+  eventType: "OBSERVE" | "THINK" | "ACT" | "VERIFY" | "TOOL_CALL" | "ERROR" | "RETRY" | "APPROVAL_REQUEST" | "PENDING" | "DONE";
   status: "SUCCESS" | "FAILED" | "PENDING";
   payload: Record<string, unknown>;
   durationMs?: number;

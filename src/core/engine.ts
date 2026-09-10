@@ -75,6 +75,10 @@ export class TaskEngine {
     this.agents.set(agent.id, agent);
   }
 
+  getAgents(): Agent[] {
+    return Array.from(this.agents.values());
+  }
+
   createTask(objective: string, context?: string, metadata?: Record<string, unknown>): Task {
     const task: Task = {
       id: randomUUID(),
