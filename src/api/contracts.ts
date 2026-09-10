@@ -5,17 +5,17 @@ import { Tool } from "../tools/types.js";
 // --- DASHBOARD ---
 export interface DashboardMetrics {
   totalAgents: number;
-  activeAgents: number;
-  pausedAgents: number;
+  activeAgents?: number;
+  pausedAgents?: number;
   tasks: {
     active: number;
     completed: number;
     failed: number;
   };
   health: {
-    status: "HEALTHY" | "DEGRADED" | "DOWN";
-    latencyMs: number;
-    memoryUsageMB: number;
+    status: "HEALTHY" | "DEGRADED" | "DOWN" | "UNKNOWN";
+    latencyMs?: number;
+    memoryUsageMB?: number;
   };
   recentActivities: ExecutionLogEntry[];
 }
@@ -67,7 +67,7 @@ export interface ExecutionLogEntry {
   taskId: string;
   executionId: string;
   timestamp: Date;
-  eventType: "OBSERVE" | "THINK" | "ACT" | "VERIFY" | "TOOL_CALL" | "ERROR" | "RETRY" | "APPROVAL_REQUEST" | "PENDING" | "DONE";
+  eventType: "OBSERVE" | "THINK" | "ACT" | "VERIFY" | "TOOL_CALL" | "ERROR" | "RETRY" | "APPROVAL_REQUEST" | "PENDING" | "FINISHED";
   status: "SUCCESS" | "FAILED" | "PENDING";
   payload: Record<string, unknown>;
   durationMs?: number;

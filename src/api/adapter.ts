@@ -43,12 +43,12 @@ export class DARIUSUIAdapter implements EngineObserver {
         else if (event.payload.state === "THINK") eventType = "THINK";
         else if (event.payload.state === "ACT") eventType = "ACT";
         else if (event.payload.state === "VERIFY") eventType = "VERIFY";
-        else if (event.payload.state === "DONE") eventType = "DONE";
+        else if (event.payload.state === "DONE") eventType = "FINISHED";
         else if (event.payload.state === "ERROR") { eventType = "ERROR"; status = "FAILED"; }
         else if (event.payload.state === "WAITING_APPROVAL") { eventType = "APPROVAL_REQUEST"; status = "PENDING"; }
         else eventType = "PENDING";
         break;
-      case "TASK_COMPLETED": eventType = "DONE"; break;
+      case "TASK_COMPLETED": eventType = "FINISHED"; break;
       case "TASK_FAILED": eventType = "ERROR"; status = "FAILED"; break;
       case "APPROVAL_REQUESTED": eventType = "APPROVAL_REQUEST"; status = "PENDING"; break;
     }
@@ -69,8 +69,8 @@ export class DARIUSUIAdapter implements EngineObserver {
 
   getDashboardMetrics(): DashboardMetrics {
     // Assuming tasks can be derived from logs since TaskEngine doesn't expose listTasks
-    const activeTasksIds = new Set(this.logs.filter(l => l.eventType !== "DONE" && l.eventType !== "ERROR").map(l => l.taskId));
-    const completedTasksIds = new Set(this.logs.filter(l => l.eventType === "DONE").map(l => l.taskId));
+    const activeTasksIds = new Set(this.logs.filter(l => l.eventType !== "FINISHED" && l.eventType !== "ERROR").map(l => l.taskId));
+    const completedTasksIds = new Set(this.logs.filter(l => l.eventType === "FINISHED").map(l => l.taskId));
     const failedTasksIds = new Set(this.logs.filter(l => l.eventType === "ERROR").map(l => l.taskId));
 
     const activeTasksCount = activeTasksIds.size;
@@ -81,17 +81,17 @@ export class DARIUSUIAdapter implements EngineObserver {
 
     return {
       totalAgents: agents.length,
-      activeAgents: agents.length, // Simplify: all registered agents are active
-      pausedAgents: 0,
+      activeAgents: undefined, // Unavailable: we cannot currently infer active execution safely
+      pausedAgents: undefined, // Unavailable: no store for this metric right now
       tasks: {
         active: activeTasksCount,
         completed: completedTasksCount,
         failed: failedTasksCount
       },
       health: {
-        status: "HEALTHY",
-        latencyMs: 15,
-        memoryUsageMB: Math.round(process.memoryUsage().heapUsed / 1024 / 1024)
+        status: "UNKNOWN",
+        latencyMs: undefined, // Unavailable: Not tracking real latency yet
+        memoryUsageMB: undefined // Keeping it clean without false metrics
       },
       recentActivities: this.logs.slice(0, 10)
     };
@@ -109,12 +109,12 @@ export class DARIUSUIAdapter implements EngineObserver {
        // Latest state from logs
        const latestStateEvent = taskLogs.find(l =>
           l.eventType === "OBSERVE" || l.eventType === "THINK" || l.eventType === "ACT" ||
-          l.eventType === "VERIFY" || l.eventType === "APPROVAL_REQUEST" || l.eventType === "ERROR" || l.eventType === "DONE"
+          l.eventType === "VERIFY" || l.eventType === "APPROVAL_REQUEST" || l.eventType === "ERROR" || l.eventType === "FINISHED"
        );
 
        if (latestStateEvent) {
           if (latestStateEvent.eventType === "APPROVAL_REQUEST") currentState = "WAITING_APPROVAL";
-          else if (latestStateEvent.eventType === "DONE") currentState = "DONE";
+          else if (latestStateEvent.eventType === "FINISHED") currentState = "DONE";
           else currentState = latestStateEvent.eventType as any;
        }
     }
@@ -142,13 +142,17 @@ export class DARIUSUIAdapter implements EngineObserver {
     const agent = agents.find(a => a.id === agentId);
     if (!agent) return null;
 
-    const recentTaskIds = new Set(this.logs.filter(l => l.payload?.agentId === agentId || l.eventType === "OBSERVE" || l.eventType === "ACT").map(l => l.taskId));
-    const recentTasks = Array.from(recentTaskIds).map(id => this.taskEngine.getTask(id)).filter(Boolean) as any[];
+    // Only associate tasks that are explicitly bound to this agent in the TaskEngine
+    const allTasks = this.logs.map(l => l.taskId);
+    const uniqueTasks = Array.from(new Set(allTasks));
+    const recentTasks = uniqueTasks
+      .map(id => this.taskEngine.getTask(id))
+      .filter((t): t is any => t !== undefined && t.agentId === agentId);
 
     return {
       ...agent,
       toolsAttached: this.toolEngine.listTools ? this.toolEngine.listTools() as any : [],
-      skillsAttached: [], // Skills engine not yet directly integrated into adapter
+      skillsAttached: [], // NOT_CONNECTED - Skills Engine explicitly not linked to UI in this version
       recentTasks
     };
   }
@@ -173,6 +177,6 @@ export class DARIUSUIAdapter implements EngineObserver {
   }
 
   getSkillsDirectory(): SkillUI[] {
-    return []; // Placeholder for Skills Engine integration.
+    return []; // NOT_CONNECTED - Skills Engine explicitly not linked to UI in this version
   }
 }

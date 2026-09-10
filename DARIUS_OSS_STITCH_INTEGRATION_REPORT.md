@@ -1,7 +1,14 @@
 # DARIUS OSS UI Integration Report (Stitch)
 
 ## Executive Summary
-This report summarizes the integration mappings from the proposed Stitch UI interfaces (Screenshots provided in `DARIUS_STITCH_HANDOFF`) to the underlying DARIUS OSS architectural contracts via `src/api/adapter.ts` and `src/api/contracts.ts`. The primary objective is to ensure that the UI purely reflects runtime reality, eliminating arbitrary mock data and respecting the integrity of the offline-validated DARIUS v0.1.0-rc.1 build.
+This report summarizes the integration mappings from the proposed Stitch UI interfaces (Screenshots provided in `DARIUS_STITCH_HANDOFF`) to the underlying DARIUS OSS architectural contracts via `src/api/adapter.ts` and `src/api/contracts.ts`. The primary objective is to prepare the backend adapter to supply data to the UI purely reflecting runtime reality, explicitly classifying placeholders for unavailable metrics instead of fabricating mock data.
+
+## CURRENT STITCH INTEGRATION STATUS
+
+- **DESIGN:** Stitch visual reference available (`DARIUS_STITCH_HANDOFF`).
+- **BACKEND ADAPTER:** API/Adapter mappings implemented and prepared (`src/api/adapter.ts`).
+- **FRONTEND:** Not present in repository. No UI framework (React/HTML) has been implemented in this phase.
+- **LIVE E2E:** Not validated.
 
 ## RC1 BASELINE RECONCILIATION
 
@@ -21,31 +28,34 @@ This report summarizes the integration mappings from the proposed Stitch UI inte
   - The `src/core/engine.ts` change was strictly necessary for the API Adapter to surface real registered agents to the Stitch UI without violating encapsulation or modifying the execution loop. It poses zero risk, does not alter the state machine, execution loop, observability, or persistence.
   - The `+5526` line count discrepancy previously noted was due to a full diff against an older baseline (pre-RC1) where large dependencies like `package-lock.json` were added, rather than a diff strictly against the RC1 tag. The true diff against RC1 is roughly +150 lines.
 - **Classification:** `API / Adapter`
-- **Decision:** The diff is clean, strictly bounds itself to the `api` layer (with one harmless getter in the core), safely connects real runtime data, and preserves the RC1 architectural constraints.
+- **Decision:** The diff strictly bounds itself to the `api` layer (with one harmless read-only getter in the core), maps strictly to existing state, removes all hardcoded mocks, and safely preserves the RC1 architectural constraints.
 
 ## Mappings
 
 ### 1. Execution Logs (`01_darius_oss_activity_execution_log.png`)
 * **Contract:** `ExecutionLogEntry` in `src/api/contracts.ts`.
-* **Adapter Logic:** The `DARIUSUIAdapter` hooks into `TaskEngine` and `TelemetryEmitter` events via the `onEvent` callback. Events are translated into standard states corresponding to the execution trace (`OBSERVE`, `THINK`, `ACT`, `VERIFY`, `DONE`, `ERROR`, `APPROVAL_REQUEST`).
-* **Implementation Note:** Added "VERIFY" and "DONE" to align telemetry and UI needs with the strict verification and idempotency layers built in the core.
+* **Adapter Logic:** The `DARIUSUIAdapter` hooks into `TaskEngine` and `TelemetryEmitter` events via the `onEvent` callback. Events are translated into standard states corresponding to the execution trace (`OBSERVE`, `THINK`, `ACT`, `VERIFY`, `FINISHED`, `ERROR`, `APPROVAL_REQUEST`).
+* **Implementation Note:** Aligned state mapping exactly to core constants, avoiding parallel nomenclature (using `FINISHED` instead of `DONE`).
 
 ### 2. Dashboard (`02_darius_oss_dashboard.png`)
 * **Contract:** `DashboardMetrics` in `src/api/contracts.ts`.
-* **Adapter Logic:** Aggregates live task metrics directly from the task execution logs rather than utilizing mocked counters. It leverages `taskEngine.getAgents()` to present correct agent availability.
-* **Implementation Note:** Replaced hardcoded values (`totalAgents: 1`, `completed: 0`) with dynamically calculated counts to fulfill the mandate against "inventing values".
+* **Adapter Logic:** Aggregates live task metrics directly from the task execution logs. `totalAgents` leverages `taskEngine.getAgents()`.
+* **Implementation Note:** Strictly scrubbed all mocked parameters (`latencyMs`, `status: "HEALTHY"`, `activeAgents`). Unavailable metrics are returned as `undefined` or `"UNKNOWN"` instead of being fabricated.
 
 ### 3. Agent Details (`03_darius_oss_detalhes_do_agente.png`)
 * **Contract:** `AgentDetail` extending `Agent`.
-* **Adapter Logic:** Implemented `getAgentDetails(agentId)` to retrieve the core configuration of the specified agent, pull its attached tools via the `ToolEngine` interface, and collect its recent task histories by filtering system execution logs for matching `agentId` traces.
+* **Adapter Logic:** Implemented `getAgentDetails(agentId)` to retrieve the core configuration of the specified agent, pulling its attached tools.
+* **Implementation Note:** Recent tasks mapping uses strict association (`task.agentId === agentId`) directly against the core engine.
 
 ### 4. Memory Manager (`04_darius_oss_gestor_de_mem_ria.png`)
 * **Contract:** `MemoryManagerUIState` reflecting `MemoryEntry`s.
-* **Adapter Logic:** Implemented `getMemoryManagerUIState()` which executes asynchronous queries directly against the integrated `MemoryStore` for `SHORT_TERM`, `SESSION`, and `LONG_TERM` scopes, sorting results by recency to reflect live data exactly as stored by the state engine.
+* **Adapter Logic:** Implemented `getMemoryManagerUIState()` which executes asynchronous queries directly against the integrated `MemoryStore`.
+* **Implementation Note:** Sorts results by `createdAt` and returns genuine empty states if no memory exists, refusing to invent data.
 
 ### 5. Skills & Capabilities (`05_darius_oss_skills_capacidades.png`)
 * **Contract:** `SkillUI`.
-* **Adapter Logic:** Implemented `getSkillsDirectory()` stub to return available skills. As the skill system implementation details were not directly hooked in the operational layers previously, it returns an empty state accurately reflecting the active components instead of generating fake skills.
+* **Adapter Logic:** Explicitly marks the skills contract connections as `NOT_CONNECTED`.
+* **Implementation Note:** Returns `[]` for attached skills because the Skills Engine is not connected to the adapter layer in this iteration. Fake skills are purposefully avoided.
 
 ### 6. Autonomy Pipeline (`06_darius_oss_task_autonomy_pipeline.png`)
 * **Contract:** `TaskExecutionUIState`.

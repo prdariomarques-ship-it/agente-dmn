@@ -54,6 +54,32 @@ describe("DARIUSUIAdapter", () => {
     expect(hasObserve).toBe(true);
     expect(hasThink).toBe(true);
     expect(hasAct).toBe(true);
+
+    const hasFinished = activities.some(a => a.eventType === "FINISHED");
+    expect(hasFinished).toBe(true);
+  });
+
+  it("should not expose mocked data in dashboard metrics", () => {
+    const metrics = adapter.getDashboardMetrics();
+    expect(metrics.health.status).toBe("UNKNOWN");
+    expect(metrics.health.latencyMs).toBeUndefined();
+    expect(metrics.health.memoryUsageMB).toBeUndefined();
+    expect(metrics.activeAgents).toBeUndefined();
+    expect(metrics.pausedAgents).toBeUndefined();
+  });
+
+  it("should correctly associate tasks strictly by agentId", async () => {
+    const task = taskEngine.createTask("Agent Assoc Test");
+    await taskEngine.executeTask(task.id, dummyAgent.id);
+
+    const agentDetails = adapter.getAgentDetails(dummyAgent.id);
+    expect(agentDetails).toBeDefined();
+
+    // Explicitly confirm it is NOT returning mocked skills array
+    expect(agentDetails?.skillsAttached).toEqual([]);
+
+    expect(agentDetails?.recentTasks.length).toBe(1);
+    expect(agentDetails?.recentTasks[0].id).toBe(task.id);
   });
 
   it("should support pause and resume for human approval", async () => {
