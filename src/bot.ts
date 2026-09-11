@@ -9,6 +9,10 @@ if (!token) {
   throw new Error("TELEGRAM_TOKEN não definido. Copie .env.example para .env e preencha o token.");
 }
 
+if (!allowedChatId) {
+  throw new Error("TELEGRAM_CHAT_ID não definido. Preencha o chat ID permitido.");
+}
+
 const bot = new Bot(token);
 
 function isAllowed(ctx: Context): boolean {
