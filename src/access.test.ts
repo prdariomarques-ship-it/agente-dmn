@@ -13,4 +13,8 @@ describe("isAllowedChat", () => {
   it("permite qualquer chat quando não há restrição configurada", () => {
     expect(isAllowedChat(123, undefined)).toBe(true);
   });
+
+  it("bloqueia quando o chatId é indefinido e há restrição configurada", () => {
+    expect(isAllowedChat(undefined, "883232211")).toBe(false);
+  });
 });
