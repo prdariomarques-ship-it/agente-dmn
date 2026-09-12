@@ -40,9 +40,28 @@ bot.command("help", async (ctx) => {
 });
 
 bot.on("message:text", async (ctx) => {
-  await ctx.reply(
-    "Recebi sua mensagem. O encaminhamento para o Hermes ainda está em configuração."
-  );
+  const text = ctx.message.text;
+  if (!text) return;
+
+  await ctx.reply("⏳ Recebi sua mensagem. Criando Task no DARIUS OSS...");
+
+  try {
+    const response = await fetch("http://127.0.0.1:3000/api/tasks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ objective: text })
+    });
+
+    if (!response.ok) {
+      await ctx.reply("❌ Falha ao criar a Task na API.");
+      return;
+    }
+
+    const data = await response.json();
+    await ctx.reply(`✅ Task criada com sucesso!\n\nID: ${data.id}\nStatus: PENDING`);
+  } catch (error) {
+    await ctx.reply(`❌ O servidor local DARIUS (porta 3000) não está respondendo.`);
+  }
 });
 
 bot.catch((error) => {

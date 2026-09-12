@@ -1,0 +1,1 @@
+echo "I have generated the DARIUS_LOCAL_APPLY_MANIFEST.md which contains the raw source code of the UI and APIs as requested so you can apply them locally. Should I proceed and generate the webhook now as you specified?"
