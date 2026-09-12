@@ -1,4 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
+import { InMemoryTaskStore } from "../core/engine.js";
+import { SimpleTelemetryEmitter } from "../observability/engine.js";
 import { DARIUSUIAdapter } from "./adapter.js";
 import { TaskEngine } from "../core/engine.js";
 import { InMemoryMemoryStore } from "../memory/engine.js";
@@ -98,5 +100,48 @@ describe("DARIUSUIAdapter", () => {
     adapter.resumeTask(task.id);
     const finishedTask = await execPromise;
     expect(finishedTask.status).toBe("COMPLETED");
+  });
+});
+
+/**
+ * NO-CoT surface contract (final RC hardening): the UI trace exposed by
+ * /api/tasks/:id must never contain the agent's internal THINK reasoning,
+ * regardless of the agent implementation. Results/evidence (ACT output) and
+ * verification output remain visible per the product spec.
+ */
+describe("DARIUSUIAdapter — no chain-of-thought leak", () => {
+  it("trace THINK outputs are withheld; ACT result stays visible", async () => {
+    const taskEngine = new TaskEngine(new InMemoryTaskStore());
+    const telemetry = new SimpleTelemetryEmitter();
+    const adapter = new DARIUSUIAdapter(taskEngine, new InMemoryMemoryStore(), new SimpleToolEngine(), telemetry);
+
+    const cotAgent: Agent = {
+      id: "cot-agent",
+      name: "CoT Agent",
+      observe: async () => "observation summary",
+      think: async () => "SECRET-INTERNAL-REASONING: plan step 3 relies on...",
+      act: async () => "DONE: public result with evidence",
+    };
+    taskEngine.registerAgent(cotAgent);
+
+    const task = taskEngine.createTask("surface contract");
+    await taskEngine.executeTask(task.id, cotAgent.id, 5000);
+    expect(taskEngine.getTask(task.id)?.status).toBe("COMPLETED");
+
+    const state = adapter.getTaskState(task.id);
+    expect(state).not.toBeNull();
+    const serialized = JSON.stringify(state);
+    expect(serialized).not.toContain("SECRET-INTERNAL-REASONING");
+
+    const trace = (state!.trace as Array<{ state: string; output?: string }>);
+    const thinkSteps = trace.filter(s => s.state === "THINK");
+    expect(thinkSteps.length).toBeGreaterThan(0);
+    for (const s of thinkSteps) {
+      expect(s.output).toBe("(internal planning step — content not exposed)");
+    }
+
+    // Result/evidence stays public.
+    const actSteps = trace.filter(s => s.state === "ACT");
+    expect(actSteps.some(s => (s.output ?? "").includes("public result"))).toBe(true);
   });
 });

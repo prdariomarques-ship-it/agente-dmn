@@ -102,7 +102,20 @@ export class DARIUSUIAdapter implements EngineObserver {
     if (!task) return null;
 
     const taskLogs = this.logs.filter(l => l.taskId === taskId);
-    const executionHistories = Array.isArray(task.metadata?.executionHistory) ? task.metadata?.executionHistory : [];
+    const rawTrace = Array.isArray(task.metadata?.executionHistory) ? task.metadata?.executionHistory : [];
+
+    // NO-CoT CONTRACT (product spec, surface section): the UI trace exposes
+    // plan structure (state + timestamp), results, evidence, tool output and
+    // status — never the agent's internal THINK reasoning. Enforcement lives
+    // here at the API boundary so no agent implementation can leak raw
+    // chain-of-thought through /api/tasks/:id. THINK step output for
+    // deterministic verticals is a curated one-line plan summary; for
+    // LLM-backed agents it is raw reasoning — both are withheld uniformly.
+    const trace = (rawTrace as Array<{ state?: string; output?: string; error?: string; timestamp?: unknown }>).map(step =>
+      step.state === "THINK" && typeof step.output === "string" && step.output.length > 0
+        ? { ...step, output: "(internal planning step — content not exposed)" }
+        : step
+    );
 
     let currentState: TaskExecutionUIState["currentState"] = "IDLE";
     if (taskLogs.length > 0) {
@@ -125,7 +138,7 @@ export class DARIUSUIAdapter implements EngineObserver {
       status: task.status,
       currentState: currentState,
       iterations: typeof task.metadata?.iterations === 'number' ? task.metadata.iterations : 0,
-      trace: executionHistories as any || []
+      trace: trace as any || []
     };
   }
 
