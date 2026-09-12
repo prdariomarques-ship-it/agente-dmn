@@ -148,3 +148,53 @@ perdedora recebe 409 e não gera resurrection nem falsa auditoria de transição
 152/152 testes (34 arquivos), `tsc --noEmit` 0 erros (backend e web), server smoke 22/22,
 auth smoke 10/10, web build OK. Commits: `f60a58b` (core), `eacc604` (server), `200251f` (api),
 `513e732` (finance tests), `68ea982` (core tests), `78708e8` (web). Manifest: `DARIUS_RELEASE_MANIFEST.md`.
+
+## 8. Release Freeze (2026-09-13, base `2acc85b` → HEAD `19dc432` + docs)
+
+### Contrato no-CoT — estado interno ≠ superfície pública (DEFINITIVO)
+
+Princípio: **THINK internal state ≠ public API trace**. O estado interno de
+raciocínio pode existir no banco (`metadata.executionHistory`) para execução e
+debug controlado; a superfície pública NUNCA o expõe.
+
+A API pública retorna apenas: `high-level plan` (estados + timestamps),
+`step`, `tool`, `status`, `result`, `evidence`, `summarized rationale`
+(sumário curado de verticais determinísticos). Nunca: `raw THINK output`,
+`private reasoning`, `hidden chain`.
+
+Vazamento real encontrado e corrigido (`19dc432`): `GET /api/tasks` retornava
+`store.listTasks()` cru e `GET /api/agents/:id` retornava `recentTasks` cru —
+ambos carregavam `metadata.executionHistory` com o reasoning THINK bruto (o
+contrato `200251f` cobria apenas `/api/tasks/:id`). Correção: `toPublicTaskSummary()`
+serializa toda superfície de lista (id/objective/status/agentId/timestamps —
+`context` e `metadata` descartados); `AgentDetail.recentTasks` tipado como
+`PublicTaskSummary[]`.
+
+Prova em 3 níveis:
+1. **Unit (adapter)** — matriz full-surface: task detail, agent detail,
+   dashboard/logs; guarda anti-falso-verde (resultado público presente).
+2. **HTTP real (`src/api/nocot.http.test.ts`)** — express app de produção com
+   agente-sentinela (`SECRET_INTERNAL_THOUGHT_SENTINEL` no THINK) executado pelo
+   engine; todas as superfícies GET varridas por HTTP real. **Vermelho→verde
+   provado**: o teste falha contra o código pré-fix (vazamento reproduzido) e
+   passa com o fix.
+3. **Live (`rc_nocot_live.sh`, 17/17)** — servidor real + fluxo Finance completo
+   (start → gate → approve (uma decisão) → COMPLETED → relatório persistido);
+   listas sem `executionHistory`/`metadata` com dados reais; 2 THINK steps
+   redigidos; sentinela ausente em 7 superfícies.
+
+Regressão permanente na suíte (157/157).
+
+### Security boundary — localhost é o default seguro
+
+| Modo | BIND_HOST | DARIUS_API_TOKEN | CORS | Status |
+|---|---|---|---|---|
+| **localhost (default)** | `127.0.0.1` | não exigido | allowlist localhost | **SEGURO** — inacessível fora da máquina |
+| LAN / Termux / Android | `0.0.0.0` (explícito) | **OBRIGATÓRIO** | allowlist explícita (`CORS_ORIGIN`) | seguro p/ clientes header-based |
+| Browser UI + token | — | — | — | **decisão futura** — nenhum workaround inseguro implementado |
+
+Regras: em modo LAN/Termux/Android é obrigatório definir `DARIUS_API_TOKEN`
+(timing-safe; `Authorization: Bearer` ou `x-darius-token`), CORS restrito por
+allowlist e bind controlado. `/api/health` permanece aberto como liveness probe.
+Limitação conhecida pré-RC1: sem token definido, `POST /api/tasks` não autentica
+(modo localhost não é afetado).
