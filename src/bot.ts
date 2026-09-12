@@ -3,7 +3,8 @@ import { Bot, Context } from "grammy";
 import { isAllowedChat } from "./access.js";
 
 const token = process.env.TELEGRAM_TOKEN;
-const allowedChatId = process.env.TELEGRAM_CHAT_ID;
+const allowedChatIdStr = process.env.TELEGRAM_CHAT_ID;
+const allowedChatId = allowedChatIdStr ? Number(allowedChatIdStr) : undefined;
 
 if (!token) {
   throw new Error("TELEGRAM_TOKEN não definido. Copie .env.example para .env e preencha o token.");
