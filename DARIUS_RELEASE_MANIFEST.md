@@ -125,3 +125,46 @@ branch `feature/darius-finance` no momento do freeze aprovado pelo usuário.
   tracking local ainda `469e8b1`). Tratado em `DARIUS_REMOTE_MIGRATION_PLAN.md`
 - `origin/main` = `c7c2e55` (intocado); nosso HEAD não existe em nenhum remote
 - Checkpoint local: `checkpoint/hardening-start` = `724bb7b`
+
+## MIGRATION READINESS (2026-09-13, operação BACKUP + DRY-RUN + PACKAGE)
+
+### Identidade formal (§10)
+- **RC1 HISTÓRICO: `3b791ac`** — intocado, ancestral verificado (merge-base = ele próprio)
+- **RC2 CANDIDATE: código congelado em `19dc432`** + docs (`4ccd4fc`, `d671162`, `b60efc9`,
+  `6c01f87`, este commit). Nunca apresentar os commits pós-RC1 como "RC1 original".
+- Tag recomendada (NÃO criada): `v0.1.0-rc.2` — só após push/PR/merge do branch de integração.
+
+### Remote drift (§8 — apenas leitura, read-only)
+- `origin/main` = `c7c2e55` (intocado)
+- `origin/feature/darius-oss-phase-0-...` = **`f0eadcf`** — **EXTERNAL REMOTE DRIFT (2ª ocorrência
+  observada)**: `469e8b1` → `ec49c2be` (detectada em 2026-09-13) → `f0eadcf` (detectada nesta
+  operação). Terceiros movem o branch ativamente. NUNCA incorporar, rebasear ou force-pushar.
+- `ec49c2be` nem sequer existe como objeto local (nunca buscado); `f0eadcf` também não buscado.
+
+### Prova de não-contaminação (§9)
+- `469e8b1` NÃO é ancestral de HEAD (`git merge-base --is-ancestor` falha)
+- `ec49c2be`: não é objeto local — impossível estar na história
+- merge-base(HEAD, `469e8b1`) = `0d8fb00` — ponto de divergência conhecido (camada herdada)
+- Nenhum descendente da linha remota destrutiva no estado atual
+
+### Backup artifacts (§3-4 — gerados APÓS este commit, vivem fora da árvore Git)
+- `DARIUS_RC2_SOURCE_BACKUP.tar.gz` — snapshot da árvore via `git archive HEAD` (só arquivos rastreados)
+- `darius-rc2.bundle` — bundle Git com história completa + refs nomeadas (`rc1/historical` = `3b791ac`,
+  `checkpoint/hardening-start` = `724bb7b`, `feature/darius-finance` = HEAD, `main`)
+- `DARIUS_RC2_PATCHSET.patch` — format-patch `--binary` de `3b791ac..HEAD` (com mensagens de commit)
+- `darius-rc2-layer-{core,server-api,plugin-system,finance,web,inherited-misc,docs}.patch` — partição
+  por camada com pathspecs disjuntos (`--binary`)
+- `SHA256SUMS` — hashes de todos os artefatos; validação `sha256sum -c` = ALL OK
+- Dry-run de migração: clone temporário do bundle + reconstrução RC1+patches com igualdade de
+  árvore (`write-tree` == `HEAD^{tree}`) + suíte completa executada no clone
+
+### Dependency gate (§14 — SEM auto-update)
+- Backend 4 moderate: `@vitest/mocker` (DEV-ONLY — nenhum impacto em produção), `qs` via express
+  (PRODUÇÃO — parsing de query; exposição localhost/LAN; fix express@5 breaking)
+- Web 1 high: vite/esbuild — DEV-SERVER ONLY (não afeta o dist de produção; fix vite@8 breaking);
+  3 moderate react-router (PRODUÇÃO — open redirect/constructor injection; fix v7 breaking)
+
+### Mobile (§15) e Finance (§16)
+- Mobile: **APK NOT BUILT** — checklist completa em `DARIUS_MOBILE_READINESS.md`; scaffold ≠ versão
+- Finance: plugin isolado, providers mock `isLive: false`, tools READ-only, zero broker/trading/
+  dinheiro/shell/rede arbitrária — reconfirmado nesta operação
