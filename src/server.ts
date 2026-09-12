@@ -9,7 +9,7 @@ import { InMemoryMemoryStore } from "./memory/engine.js";
 import { SimpleModelRouter } from "./model/router.js";
 import { OllamaProvider } from "./model/ollama.js";
 import { DeterministicVerificationEngine } from "./verification/engine.js";
-import { DARIUSUIAdapter } from "./api/adapter.js";
+import { DARIUSUIAdapter, toPublicTaskSummary } from "./api/adapter.js";
 import { SimpleToolEngine } from "./tools/engine.js";
 import { SimpleSkillEngine } from "./skills/engine.js";
 import { SimpleTelemetryEmitter } from "./observability/engine.js";
@@ -112,7 +112,9 @@ app.get("/api/dashboard", (req, res) => {
   res.json(uiAdapter.getDashboardMetrics());
 });
 app.get("/api/tasks", (req, res) => {
-  res.json(store.listTasks());
+  // NO-CoT CONTRACT: raw store tasks carry metadata.executionHistory (raw
+  // THINK reasoning). Only the public summary shape may cross the boundary.
+  res.json(store.listTasks().map(toPublicTaskSummary));
 });
 app.post("/api/tasks", async (req, res) => {
   const { objective, modelName } = req.body as { objective?: string; modelName?: string };
@@ -131,7 +133,8 @@ app.post("/api/tasks", async (req, res) => {
   };
   store.saveTask(task);
   engine.executeTask(task.id, agent.id).catch((err: unknown) => console.error("Background execution error:", err));
-  res.json(task);
+  // Same public summary shape as GET /api/tasks — never the raw store task.
+  res.json(toPublicTaskSummary(task));
 });
 app.get("/api/tasks/:id", (req, res) => {
   const state = uiAdapter.getTaskState(req.params.id);
@@ -212,4 +215,8 @@ if (process.env.DARIUS_DISABLE_LISTEN !== "1") {
   });
 }
 
-export { app };
+// `engine` is exported for read-only observability probes (e.g. the no-CoT
+// sentinel probe registers a probe agent and asserts no HTTP surface leaks
+// internal reasoning). It grants no privileged mutation path beyond the
+// engine's own public API.
+export { app, engine };

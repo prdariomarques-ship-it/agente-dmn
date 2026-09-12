@@ -3,7 +3,24 @@ import { TelemetryEmitter } from "../observability/types.js";
 import { EngineEvent, EngineObserver } from "../core/types.js";
 import { MemoryStore } from "../memory/types.js";
 import { ToolEngine } from "../tools/types.js";
-import { DashboardMetrics, ExecutionLogEntry, TaskExecutionUIState, MemoryManagerUIState, AgentDetail, SkillUI } from "./contracts.js";
+import { DashboardMetrics, ExecutionLogEntry, TaskExecutionUIState, MemoryManagerUIState, AgentDetail, SkillUI, PublicTaskSummary } from "./contracts.js";
+import type { Task } from "../core/types.js";
+
+// NO-CoT CONTRACT (list surfaces): serialize a Task down to the public
+// summary shape. `context` and `metadata` are deliberately dropped —
+// metadata.executionHistory carries the agent's raw THINK reasoning and must
+// never cross the API boundary wholesale. /api/tasks/:id remains the only
+// task-bearing surface and exposes a curated, THINK-redacted trace.
+export function toPublicTaskSummary(task: Task): PublicTaskSummary {
+  return {
+    id: task.id,
+    objective: task.objective,
+    status: task.status,
+    ...(task.agentId ? { agentId: task.agentId } : {}),
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+  };
+}
 
 export class DARIUSUIAdapter implements EngineObserver {
   private logs: ExecutionLogEntry[] = [];
@@ -167,13 +184,16 @@ export class DARIUSUIAdapter implements EngineObserver {
     // (contextEngine/modelRouter; finance agents reach workflow -> engine),
     // which leaked internal structure into the API response and could produce
     // circular JSON. Public Agent fields only, per the UI contract.
+    // NO-COT FIX (release freeze): recentTasks used to return raw Task objects
+    // whose metadata.executionHistory carries raw THINK reasoning. Serialize
+    // every task through the public summary shape instead.
     return {
       id: agent.id,
       name: agent.name,
       description: agent.description,
       toolsAttached: this.toolEngine.listTools ? this.toolEngine.listTools() as any : [],
       skillsAttached: [], // NOT_CONNECTED - Skills Engine explicitly not linked to UI in this version
-      recentTasks
+      recentTasks: recentTasks.map(toPublicTaskSummary)
     };
   }
 

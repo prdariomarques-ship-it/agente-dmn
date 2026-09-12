@@ -145,3 +145,58 @@ describe("DARIUSUIAdapter — no chain-of-thought leak", () => {
     expect(actSteps.some(s => (s.output ?? "").includes("public result"))).toBe(true);
   });
 });
+
+/**
+ * NO-CoT full-surface sentinel matrix (release freeze, §3): the sentinel
+ * string is injected as an agent's raw THINK output and must not appear on
+ * ANY public adapter surface — task detail (/api/tasks/:id + Web execution
+ * trace), agent detail (/api/agents/:id incl. recentTasks), or the event
+ * log surfaces (/api/dashboard, /api/logs). Structural guarantees: public
+ * task summaries never carry metadata/executionHistory at all.
+ */
+describe("DARIUSUIAdapter — no-CoT full-surface sentinel matrix", () => {
+  it("sentinel THINK reasoning never reaches any public surface", async () => {
+    const taskEngine = new TaskEngine(new InMemoryTaskStore());
+    const telemetry = new SimpleTelemetryEmitter();
+    const adapter = new DARIUSUIAdapter(taskEngine, new InMemoryMemoryStore(), new SimpleToolEngine(), telemetry);
+
+    const SENTINEL = "SECRET_INTERNAL_THOUGHT_SENTINEL";
+    const sentinelAgent: Agent = {
+      id: "sentinel-agent",
+      name: "Sentinel Agent",
+      observe: async () => "observe summary",
+      think: async () => `${SENTINEL} hidden plan relies on step 3`,
+      act: async () => "DONE: PUBLIC_RESULT_SENTINEL final report",
+    };
+    taskEngine.registerAgent(sentinelAgent);
+
+    const task = taskEngine.createTask("sentinel matrix probe");
+    await taskEngine.executeTask(task.id, sentinelAgent.id, 5000);
+    expect(taskEngine.getTask(task.id)?.status).toBe("COMPLETED");
+
+    // 1. /api/tasks/:id — task detail + Web execution trace
+    const taskDetail = JSON.stringify(adapter.getTaskState(task.id));
+    // 2. /api/agents/:id — agent detail including recentTasks
+    const agentDetail = JSON.stringify(adapter.getAgentDetails(sentinelAgent.id));
+    // 3. /api/dashboard and /api/logs — event payload surface
+    const dashboardAndLogs = JSON.stringify(adapter.getDashboardMetrics());
+
+    const surfaces: Array<[string, string]> = [
+      ["/api/tasks/:id", taskDetail],
+      ["/api/agents/:id", agentDetail],
+      ["/api/dashboard,/api/logs", dashboardAndLogs],
+    ];
+    for (const [surface, body] of surfaces) {
+      expect(body, `chain-of-thought leaked through ${surface}`).not.toContain(SENTINEL);
+    }
+
+    // Structural: agent-borne task summaries must not carry execution
+    // metadata at all (raw executionHistory is the leak vector).
+    expect(agentDetail).not.toContain("executionHistory");
+    expect(agentDetail).not.toContain('"metadata"');
+
+    // False-green guard: the public result DID reach the detail surface,
+    // proving the probe actually executed content end-to-end.
+    expect(taskDetail).toContain("PUBLIC_RESULT_SENTINEL");
+  });
+});

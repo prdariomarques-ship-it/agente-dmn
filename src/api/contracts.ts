@@ -1,4 +1,4 @@
-import { Agent, Task, TaskStatus, ExecutionState, ExecutionStep } from "../core/types.js";
+import { Agent, TaskStatus, ExecutionState, ExecutionStep } from "../core/types.js";
 import { MemoryEntry, MemoryType } from "../memory/types.js";
 import { Tool } from "../tools/types.js";
 
@@ -20,12 +20,27 @@ export interface DashboardMetrics {
   recentActivities: ExecutionLogEntry[];
 }
 
+// --- TASKS (public serialization) ---
+// The ONLY task shape allowed on list surfaces (GET /api/tasks, POST /api/tasks
+// response, AgentDetail.recentTasks). Deliberately excludes `context` and
+// `metadata`: Task.metadata.executionHistory holds the agent's raw THINK
+// reasoning (chain-of-thought) and must never cross the API boundary
+// wholesale. /api/tasks/:id exposes a curated, THINK-redacted trace instead.
+export interface PublicTaskSummary {
+  id: string;
+  objective: string;
+  status: TaskStatus;
+  agentId?: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+}
+
 // --- AGENTS ---
 export interface AgentDetail extends Agent {
   model?: string;
   toolsAttached: Tool[];
   skillsAttached: string[];
-  recentTasks: Task[];
+  recentTasks: PublicTaskSummary[];
 }
 
 // --- TASKS & EXECUTION ENGINE ---
