@@ -55,6 +55,24 @@ app.use(
 
 const PORT = Number(process.env.PORT) || 3000;
 
+/**
+ * Loopback-only bind classifier (RC2 security closure).
+ *
+ * A bind host is SAFE only when the listening socket cannot be reached from
+ * another machine: IPv4 loopback (127.0.0.0/8), IPv6 ::1, or the literal
+ * "localhost". Everything else (0.0.0.0, ::, wildcard shorthands, any
+ * LAN/public address) exposes the API beyond this machine and therefore
+ * REQUIRES DARIUS_API_TOKEN — the server refuses to boot otherwise
+ * (fail-fast, deterministic, no behavior change for loopback setups and
+ * for Termux/LAN deployments configured per DARIUS_TERMUX_DEPLOYMENT.md).
+ */
+export function isLoopbackBind(host: string): boolean {
+  const h = (host || "").trim().toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "localhost" || h === "::1") return true;
+  if (h.startsWith("127.")) return true;
+  return false;
+}
+
 // ---- Minimal API auth boundary (opt-in) ----
 // Localhost-only deployments (default BIND_HOST=127.0.0.1) need no token:
 // when DARIUS_API_TOKEN is unset the server behaves exactly as before.
@@ -64,6 +82,8 @@ const PORT = Number(process.env.PORT) || 3000;
 // Clients without an Origin header (curl, mobile apps) pass the token as a
 // header; browser-based UIs need their own token delivery mechanism, which
 // is an architectural decision documented in DARIUS_HARDENING.md (pending).
+// ENFORCEMENT (RC2): a non-loopback bind WITHOUT a token is refused at boot —
+// an unauthenticated API on the LAN is not an acceptable silent default.
 const apiToken = process.env.DARIUS_API_TOKEN?.trim() || "";
 if (apiToken) {
   const expected = Buffer.from(apiToken, "utf8");
@@ -174,6 +194,13 @@ if (process.env.DARIUS_DISABLE_LISTEN !== "1") {
   // Bind to loopback by default; set BIND_HOST=0.0.0.0 explicitly when the
   // API must be reachable from other devices (e.g. Termux/mobile setup).
   const bindHost = process.env.BIND_HOST || "127.0.0.1";
+  if (!isLoopbackBind(bindHost) && !apiToken) {
+    console.error(
+      `REFUSING TO START: BIND_HOST=${bindHost} exposes the API beyond this machine but DARIUS_API_TOKEN is not set. ` +
+        `Set DARIUS_API_TOKEN (see DARIUS_TERMUX_DEPLOYMENT.md) or keep BIND_HOST=127.0.0.1.`
+    );
+    process.exit(1);
+  }
 
   // ---- Vertical plugins (additive; Core never imports plugins) ----
   // Adapt express to the framework-free plugin route registrar.

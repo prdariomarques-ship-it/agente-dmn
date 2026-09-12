@@ -81,10 +81,10 @@ Configured Ollama URL: http://127.0.0.1:11434
 
 ## 5. Segurança (resumo)
 
-- **O token é opt-in**: o servidor NÃO recusa iniciar com
-  `BIND_HOST=0.0.0.0` sem `DARIUS_API_TOKEN` — nesse estado toda a API fica
-  **aberta sem autenticação na LAN**. Definir o token é responsabilidade do
-  operador; nunca suba em `0.0.0.0` sem ele.
+- **Enforcement (RC2)**: o servidor **RECUSA iniciar** (fail-fast) com
+  `BIND_HOST` não-loopback (ex.: `0.0.0.0`, `::`) sem `DARIUS_API_TOKEN`
+  definido. A API nunca fica aberta na LAN por acidente — defina o token
+  ou mantenha `BIND_HOST=127.0.0.1`.
 - Com token definido, todo `/api` (exceto `/api/health`) exige
   `Authorization: Bearer <token>` ou `x-darius-token: <token>` (comparação
   timing-safe, o token nunca é logado).
