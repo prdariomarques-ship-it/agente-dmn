@@ -117,11 +117,12 @@ export class FinanceAnalysisWorkflow {
    * Human approval. Records the decision in the MemoryStore and resumes the
    * task through the Core's native resume path.
    *
-   * RC VALIDATION FIX: the Core treats unknown ids as silent no-ops
-   * (resumeTask/rejectTask guard on `task &&`), so this layer must validate
-   * BEFORE recording anything — otherwise a decision for a nonexistent or
-   * non-parked task is written to the audit memory and the API reports
-   * success. Only a task actually parked in PAUSED may be decided.
+   * RC VALIDATION FIX: a decision must only be recorded for a task actually
+   * parked in PAUSED. The Core rejects unknown ids outright, but its
+   * resumeTask is still a silent no-op for a non-parked (wrong-status) task —
+   * so this layer must validate BEFORE recording anything. Otherwise a
+   * decision for a non-parked task would be written to the audit memory and
+   * the API would report success while the task never resumed.
    */
   async approve(taskId: string, approver: string, comment?: string): Promise<void> {
     this.assertDecidable(taskId);

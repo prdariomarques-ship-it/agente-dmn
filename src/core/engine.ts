@@ -126,7 +126,11 @@ export class TaskEngine {
 
   pauseForApproval(taskId: string): void {
     const task = this.taskStore.getTask(taskId);
-    if (task && task.status === "RUNNING") {
+    // Unknown ids are an operator error: fail loudly (consistent with
+    // cancelTask). Wrong-status ids remain a silent no-op: the pause is
+    // only meaningful for a RUNNING task.
+    if (!task) throw new Error(`Task with id ${taskId} not found`);
+    if (task.status === "RUNNING") {
       task.status = "PAUSED";
       this.taskStore.saveTask(task);
       this.emit({ type: "APPROVAL_REQUESTED", taskId, timestamp: new Date(), payload: {} });
@@ -135,7 +139,8 @@ export class TaskEngine {
 
   resumeTask(taskId: string): void {
     const task = this.taskStore.getTask(taskId);
-    if (task && task.status === "PAUSED") {
+    if (!task) throw new Error(`Task with id ${taskId} not found`);
+    if (task.status === "PAUSED") {
       task.status = "RUNNING";
       this.taskStore.saveTask(task);
 
@@ -151,12 +156,13 @@ export class TaskEngine {
 
   rejectTask(taskId: string, reason: string): void {
     const task = this.taskStore.getTask(taskId);
-    if (task && task.status === "PAUSED") {
+    if (!task) throw new Error(`Task with id ${taskId} not found`);
+    if (task.status === "PAUSED") {
       task.status = "FAILED";
       task.error = `REJECTED: ${reason}`;
       this.taskStore.saveTask(task);
       this.emit({ type: "TASK_FAILED", taskId: task.id, timestamp: new Date(), payload: { error: task.error } });
-    } else if (task) {
+    } else {
       throw new Error("Can only reject a task that is PAUSED for approval");
     }
   }
@@ -509,6 +515,21 @@ export class TaskEngine {
       this.taskStore.saveTask(task);
       return;
     }
+    if (task.status === "PAUSED") {
+      // INVARIANT (approval gate): PAUSED never becomes FAILED — the timer
+      // path already obeys this; the internal-failure path must obey it too.
+      // A gate that landed while the agent was failing keeps ownership of the
+      // task: the error is recorded (task.error + history) for the human
+      // decision, and the execution returns to a resumable state (resumeTask
+      // deliberately ignores DONE/ERROR executions) so an approval can retry
+      // the failed step cleanly.
+      task.error = errorMsg;
+      task.updatedAt = new Date();
+      this.taskStore.saveTask(task);
+      execution.state = "IDLE";
+      this.execStore.saveExecution(execution);
+      return;
+    }
     task.status = "FAILED";
     task.error = errorMsg;
     task.metadata = { ...task.metadata, executionHistory: execution.history };
@@ -525,6 +546,10 @@ export class TaskEngine {
     task.status = "CANCELLED";
     task.updatedAt = new Date();
     this.taskStore.saveTask(task);
+    // OBSERVABILITY FIX: cancellation used to be the only terminal transition
+    // with no engine event — observers (UI logs, telemetry, finance audit)
+    // never learned a task was cancelled until they re-polled the store.
+    this.emit({ type: "TASK_CANCELLED", taskId: task.id, timestamp: new Date(), payload: {} });
     return task;
   }
 }

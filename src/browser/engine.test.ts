@@ -21,6 +21,33 @@ describe("SafeBrowserEngine", () => {
       .rejects.toThrow("SECURITY_VIOLATION: Navigation to internal or blocked domain");
   });
 
+  it("should block loopback/private variants beyond the exact original strings (RC2 hardening)", async () => {
+    const blocked = [
+      "http://127.0.0.2/x",            // loopback /8, not just .1
+      "http://[::1]/x",                // IPv6 loopback literal
+      "http://sub.localhost/x",        // localhost subdomain
+      "http://LOCALHOST/x",            // case variant
+      "http://localhost./x",           // trailing root dot
+      "http://0.0.0.0/x",              // unspecified / "this network"
+      "http://10.1.2.3/x",             // RFC1918
+      "http://172.16.0.5/x",           // RFC1918
+      "http://172.31.255.255/x",       // RFC1918 upper edge
+      "http://192.168.1.5/x",          // RFC1918
+      "http://169.254.0.1/x",          // link-local /8 range
+      "http://2130706433/x",           // decimal IPv4 → canonical 127.0.0.1
+      "http://[::ffff:127.0.0.1]/x",   // IPv4-mapped IPv6 (canonical hex form)
+    ];
+    for (const url of blocked) {
+      await expect(browser.execute("navigate", { url }, "t1"), url)
+        .rejects.toThrow("SECURITY_VIOLATION: Navigation to internal or blocked domain");
+    }
+  });
+
+  it("should still allow public domains after hardening", async () => {
+    const res = await browser.execute("navigate", { url: "https://example.com/deep" }, "t1");
+    expect(res).toBe("Navigated to https://example.com/deep");
+  });
+
   it("should perform other actions", async () => {
     const res = await browser.execute("extractContent", { selector: "h1" }, "t1");
     expect(res).toBe("Content for h1");

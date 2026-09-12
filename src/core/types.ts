@@ -75,7 +75,7 @@ export interface ExecutionStore {
 }
 
 export interface EngineEvent {
-  type: "TASK_CREATED" | "STATE_CHANGED" | "TASK_COMPLETED" | "TASK_FAILED" | "APPROVAL_REQUESTED";
+  type: "TASK_CREATED" | "STATE_CHANGED" | "TASK_COMPLETED" | "TASK_FAILED" | "APPROVAL_REQUESTED" | "TASK_CANCELLED";
   taskId: string;
   timestamp: Date;
   payload: Record<string, any>;

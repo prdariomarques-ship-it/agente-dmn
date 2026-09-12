@@ -67,6 +67,7 @@ export class DARIUSUIAdapter implements EngineObserver {
         break;
       case "TASK_COMPLETED": eventType = "FINISHED"; break;
       case "TASK_FAILED": eventType = "ERROR"; status = "FAILED"; break;
+      case "TASK_CANCELLED": eventType = "CANCELLED"; status = "CANCELLED"; break;
       case "APPROVAL_REQUESTED": eventType = "APPROVAL_REQUEST"; status = "PENDING"; break;
     }
 
