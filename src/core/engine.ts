@@ -258,6 +258,17 @@ export class TaskEngine {
       const setExecutionTimeout = () => {
         if (timeoutId) clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
+          // BUDGET SEMANTICS (final RC hardening): the execution timeout
+          // measures ACTIVE execution time only. A human gate (PAUSED) or a
+          // terminal decision (CANCELLED / REJECTED) that landed while the
+          // agent was working owns the task — the timer must never convert
+          // WAITING_APPROVAL into FAILED("timed out") nor overwrite the
+          // audit-relevant error of a state that landed during the last
+          // await. The loop's own pause/terminal handling exits cleanly.
+          this.syncWithStore(task);
+          if (task.status !== "RUNNING") {
+            return;
+          }
           isTimeout = true;
           this.failTask(task, execution, "Task execution timed out");
           this.activeLoops.delete(task.id);
