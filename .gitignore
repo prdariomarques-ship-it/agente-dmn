@@ -9,3 +9,4 @@ node_modules/
 .signal_state.json
 web/
 dist/
+DARIUS_FORENSIC.md
