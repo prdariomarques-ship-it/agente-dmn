@@ -1,5 +1,5 @@
 import "dotenv/config";
-import express from "express";
+import express, { type RequestHandler } from "express";
 import cors from "cors";
 import { TaskEngine } from "./core/engine.js";
 import { SQLitePersistentStore } from "./core/sqlite.js";
@@ -10,12 +10,47 @@ import { SimpleModelRouter } from "./model/router.js";
 import { OllamaProvider } from "./model/ollama.js";
 import { DeterministicVerificationEngine } from "./verification/engine.js";
 import { DARIUSUIAdapter } from "./api/adapter.js";
+import { SimpleToolEngine } from "./tools/engine.js";
+import { SimpleSkillEngine } from "./skills/engine.js";
+import { SimpleTelemetryEmitter } from "./observability/engine.js";
+import { PluginHost } from "./plugins/host.js";
+import type { RouteRegistrarLike } from "./plugins/contract.js";
+import { createFinancePlugin } from "./plugins/finance/plugin.js";
 import { randomUUID } from "node:crypto";
-import { Task } from "./core/types.js";
+import type { Task } from "./core/types.js";
+
+// DARIUS Server is an INTERFACE/ADAPTER layer only:
+//   HTTP API -> DARIUSUIAdapter -> TaskEngine (Core)
+// No business logic lives here. The Telegram bot (src/bot.ts) is a sibling
+// adapter over the same Core; this file does not create a second runtime.
 
 const app = express();
-app.use(cors());
 app.use(express.json());
+
+// CORS is restricted to an explicit allowlist (never "*").
+// Configure with CORS_ORIGIN="https://ui.example.com,https://ui2.example.com".
+// Defaults cover local development of the DARIUS web UI only.
+const allowedOrigins = (process.env.CORS_ORIGIN ?? "http://localhost:5173,http://localhost:4173,http://localhost:3000")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      // Allow-list only. Non-allowlisted browser origins receive no CORS
+      // headers (browsers block them); non-browser tools without Origin
+      // header (curl, mobile webview) pass through unaffected.
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, false);
+      }
+    },
+    methods: ["GET", "POST"],
+    credentials: false,
+  })
+);
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -34,36 +69,113 @@ const agent = new AutonomousAgent("agent-cli-1", "DARIUS_General_Agent", context
 const engine = new TaskEngine(store, { verifier }, undefined, undefined, memory, verifier);
 engine.registerAgent(agent);
 
-const dummyToolEngine: any = { listTools: () => [] };
-const uiAdapter = new DARIUSUIAdapter(engine, memory, dummyToolEngine, undefined);
+// Real host engines (plugins register into these; Core keeps owning them).
+const toolEngine = new SimpleToolEngine(); // HIGH/CRITICAL risk gated off by default
+const skillEngine = new SimpleSkillEngine();
+const telemetry = new SimpleTelemetryEmitter();
 
-app.get("/api/health", (req, res) => res.json(uiAdapter.getDashboardMetrics().health));
-app.get("/api/dashboard", (req, res) => res.json(uiAdapter.getDashboardMetrics()));
-app.get("/api/tasks", (req, res) => res.json(store.listTasks()));
+const uiAdapter = new DARIUSUIAdapter(engine, memory, toolEngine, telemetry);
+
+app.get("/api/health", (req, res) => {
+  res.json(uiAdapter.getDashboardMetrics().health);
+});
+app.get("/api/dashboard", (req, res) => {
+  res.json(uiAdapter.getDashboardMetrics());
+});
+app.get("/api/tasks", (req, res) => {
+  res.json(store.listTasks());
+});
 app.post("/api/tasks", async (req, res) => {
-  const { objective, modelName } = req.body;
-  if (!objective) return res.status(400).json({ error: "Missing objective" });
-  const task: Task = { id: randomUUID(), objective, status: "PENDING", agentId: agent.id, metadata: { successCriteria: "Done", modelName: modelName || "nemotron-3.5-lightning:latest" }, createdAt: new Date(), updatedAt: new Date() };
+  const { objective, modelName } = req.body as { objective?: string; modelName?: string };
+  if (!objective) {
+    res.status(400).json({ error: "Missing objective" });
+    return;
+  }
+  const task: Task = {
+    id: randomUUID(),
+    objective,
+    status: "PENDING",
+    agentId: agent.id,
+    metadata: { successCriteria: "Done", modelName: modelName || "nemotron-3.5-lightning:latest" },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
   store.saveTask(task);
-  engine.executeTask(task.id, agent.id).catch(err => console.error("Background execution error:", err));
+  engine.executeTask(task.id, agent.id).catch((err: unknown) => console.error("Background execution error:", err));
   res.json(task);
 });
 app.get("/api/tasks/:id", (req, res) => {
   const state = uiAdapter.getTaskState(req.params.id);
-  if (!state) return res.status(404).json({ error: "Not found" });
+  if (!state) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
   res.json(state);
 });
-app.get("/api/agents", (req, res) => res.json(engine.getAgents()));
+app.get("/api/agents", (req, res) => {
+  res.json(engine.getAgents());
+});
 app.get("/api/agents/:id", (req, res) => {
   const detail = uiAdapter.getAgentDetails(req.params.id);
-  if (!detail) return res.status(404).json({ error: "Not found" });
+  if (!detail) {
+    res.status(404).json({ error: "Not found" });
+    return;
+  }
   res.json(detail);
 });
-app.get("/api/memory", async (req, res) => res.json(await uiAdapter.getMemoryManagerUIState()));
-app.get("/api/skills", (req, res) => res.json(uiAdapter.getSkillsDirectory()));
-app.get("/api/logs", (req, res) => res.json(uiAdapter.getDashboardMetrics().recentActivities || []));
-
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`DARIUS API Server is running on http://0.0.0.0:${PORT}`);
-  console.log(`Configured Ollama URL: ${ollamaUrl}`);
+app.get("/api/memory", async (req, res) => {
+  res.json(await uiAdapter.getMemoryManagerUIState());
 });
+app.get("/api/skills", (req, res) => {
+  res.json(uiAdapter.getSkillsDirectory());
+});
+app.get("/api/logs", (req, res) => {
+  res.json(uiAdapter.getDashboardMetrics().recentActivities || []);
+});
+
+if (process.env.DARIUS_DISABLE_LISTEN !== "1") {
+  // Bind to loopback by default; set BIND_HOST=0.0.0.0 explicitly when the
+  // API must be reachable from other devices (e.g. Termux/mobile setup).
+  const bindHost = process.env.BIND_HOST || "127.0.0.1";
+
+  // ---- Vertical plugins (additive; Core never imports plugins) ----
+  // Adapt express to the framework-free plugin route registrar.
+  const registrar: RouteRegistrarLike = {
+    get: (path: string, handler: (req: unknown, res: unknown) => void) =>
+      app.get(path, handler as RequestHandler),
+    post: (path: string, handler: (req: unknown, res: unknown) => void) =>
+      app.post(path, handler as RequestHandler),
+  };
+  const host = new PluginHost({
+    taskEngine: engine,
+    toolEngine,
+    skillEngine,
+    memory,
+    telemetry,
+    verifier,
+    routes: registrar,
+  });
+
+  const applyPlugins = host
+    .apply(createFinancePlugin({ modelRouter: router }))
+    .then(() => {
+      console.log(
+        `Plugins applied: ${host.listPlugins().map((p) => `${p.id}@${p.version}`).join(", ")}`
+      );
+    })
+    .catch((err: unknown) => {
+      // A failing vertical must never take the base OS down: keep serving
+      // the Core API and report the plugin failure loudly.
+      console.error("PLUGIN APPLICATION FAILED (Core API remains available):", err);
+    });
+
+  void applyPlugins.then(() => {
+    app.listen(PORT, bindHost, () => {
+      console.log(`DARIUS API Server is running on http://${bindHost}:${PORT}`);
+      console.log(`CORS allowlist: ${allowedOrigins.join(", ")}`);
+      console.log(`Configured Ollama URL: ${ollamaUrl}`);
+    });
+  });
+}
+
+export { app };
