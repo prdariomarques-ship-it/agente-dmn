@@ -266,6 +266,19 @@ export class TaskEngine {
 
           let wasPaused = false;
           while (execution.iterations < execution.maxIterations && !isTimeout && (task.status === "RUNNING" || task.status === "PAUSED")) {
+            // APPROVAL-GATE FIX (minimal core patch, see DARIUS_FINANCE.md):
+            // TaskStore.saveTask replaces the stored object with a copy, so
+            // external pauseForApproval/resumeTask/rejectTask/cancelTask calls
+            // mutate a different object than this loop's local `task`. Re-read
+            // the authoritative status every iteration, otherwise the loop
+            // never observes WAITING_APPROVAL and re-runs the agent instead
+            // of parking for human approval.
+            const authoritativeTask = this.taskStore.getTask(task.id);
+            if (authoritativeTask && authoritativeTask.status !== task.status) {
+              task.status = authoritativeTask.status;
+              if (authoritativeTask.error) task.error = authoritativeTask.error;
+            }
+
             if (task.status === "PAUSED") {
               if (!wasPaused) {
                 if (timeoutId) clearTimeout(timeoutId);
