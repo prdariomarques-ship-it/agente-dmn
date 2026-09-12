@@ -216,3 +216,45 @@ describe("DARIUS Finance — E2E workflow (offline)", () => {
     expect(done.error).toMatch(/market research.*did not complete|provider exploded/s);
   }, 30000);
 });
+
+describe("DARIUS Finance — approval decision guards (RC validation)", () => {
+  it("approve on an unknown task throws and records NO audit decision", async () => {
+    const rt = buildRuntime();
+    const plugin = createFinancePlugin();
+    await rt.host.apply(plugin);
+    const wf = plugin.getWorkflow();
+
+    await expect(wf.approve("no-such-task", "rc-bot")).rejects.toThrow(/not found/i);
+
+    const decisions = await rt.memory.search({ type: "EPISODIC" });
+    expect(decisions.filter(e => (e.metadata as { kind?: string })?.kind === "APPROVAL_DECISION")).toHaveLength(0);
+  });
+
+  it("reject on an unknown task throws and records NO audit decision", async () => {
+    const rt = buildRuntime();
+    const plugin = createFinancePlugin();
+    await rt.host.apply(plugin);
+    const wf = plugin.getWorkflow();
+
+    await expect(wf.reject("no-such-task", "rc-bot", "nope")).rejects.toThrow(/not found/i);
+
+    const decisions = await rt.memory.search({ type: "EPISODIC" });
+    expect(decisions.filter(e => (e.metadata as { kind?: string })?.kind === "APPROVAL_DECISION")).toHaveLength(0);
+  });
+
+  it("approve on a task that is not parked in PAUSED throws (no fake audit)", async () => {
+    const rt = buildRuntime();
+    const plugin = createFinancePlugin({ analysisTimeoutMs: 15000, childTimeoutMs: 8000 });
+    await rt.host.apply(plugin);
+    const wf = plugin.getWorkflow();
+
+    // Synchronously after start() the task is still PENDING (execution is
+    // fire-and-forget) — definitively not decidable.
+    const { taskId } = wf.start(input);
+    await expect(wf.approve(taskId, "rc-bot")).rejects.toThrow(/not awaiting approval/i);
+    await expect(wf.reject(taskId, "rc-bot", "early")).rejects.toThrow(/not awaiting approval/i);
+
+    const decisions = await rt.memory.search({ type: "EPISODIC" });
+    expect(decisions.filter(e => (e.metadata as { kind?: string })?.kind === "APPROVAL_DECISION")).toHaveLength(0);
+  });
+});

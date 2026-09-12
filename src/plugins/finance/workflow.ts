@@ -116,16 +116,35 @@ export class FinanceAnalysisWorkflow {
   /**
    * Human approval. Records the decision in the MemoryStore and resumes the
    * task through the Core's native resume path.
+   *
+   * RC VALIDATION FIX: the Core treats unknown ids as silent no-ops
+   * (resumeTask/rejectTask guard on `task &&`), so this layer must validate
+   * BEFORE recording anything — otherwise a decision for a nonexistent or
+   * non-parked task is written to the audit memory and the API reports
+   * success. Only a task actually parked in PAUSED may be decided.
    */
   async approve(taskId: string, approver: string, comment?: string): Promise<void> {
+    this.assertDecidable(taskId);
     await this.recordDecision(taskId, { taskId, decision: "APPROVED", approver, reason: comment, decidedAt: new Date().toISOString() });
     this.deps.engine.resumeTask(taskId);
   }
 
   /** Human rejection. Rejects via the Core's native reject path. */
   async reject(taskId: string, approver: string, reason: string): Promise<void> {
+    this.assertDecidable(taskId);
     await this.recordDecision(taskId, { taskId, decision: "REJECTED", approver, reason, decidedAt: new Date().toISOString() });
     this.deps.engine.rejectTask(taskId, reason);
+  }
+
+  /** A decision is only valid for an existing task parked in PAUSED. */
+  private assertDecidable(taskId: string): void {
+    const task = this.deps.engine.getTask(taskId);
+    if (!task) {
+      throw new Error(`Task ${taskId} not found`);
+    }
+    if (task.status !== "PAUSED") {
+      throw new Error(`Task ${taskId} is not awaiting approval (status: ${task.status})`);
+    }
   }
 
   /** Current status of an analysis task. */

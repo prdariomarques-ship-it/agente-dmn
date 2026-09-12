@@ -113,7 +113,12 @@ app.get("/api/tasks/:id", (req, res) => {
   res.json(state);
 });
 app.get("/api/agents", (req, res) => {
-  res.json(engine.getAgents());
+  // RC VALIDATION FIX: serialize only the public AgentSummary contract.
+  // Raw AutonomousAgent instances hold contextEngine/modelRouter/workflow
+  // references (finance agents reach deps.engine) — JSON.stringify hits a
+  // circular structure (TaskEngine.observers -> UIAdapter -> taskEngine)
+  // and the endpoint answered 500.
+  res.json(engine.getAgents().map((a) => ({ id: a.id, name: a.name, description: a.description })));
 });
 app.get("/api/agents/:id", (req, res) => {
   const detail = uiAdapter.getAgentDetails(req.params.id);

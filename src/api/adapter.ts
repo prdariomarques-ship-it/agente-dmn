@@ -149,8 +149,15 @@ export class DARIUSUIAdapter implements EngineObserver {
       .map(id => this.taskEngine.getTask(id))
       .filter((t): t is any => t !== undefined && t.agentId === agentId);
 
+    // RC VALIDATION FIX: build the detail explicitly instead of spreading the
+    // raw Agent instance. Agent implementations hold engine internals
+    // (contextEngine/modelRouter; finance agents reach workflow -> engine),
+    // which leaked internal structure into the API response and could produce
+    // circular JSON. Public Agent fields only, per the UI contract.
     return {
-      ...agent,
+      id: agent.id,
+      name: agent.name,
+      description: agent.description,
       toolsAttached: this.toolEngine.listTools ? this.toolEngine.listTools() as any : [],
       skillsAttached: [], // NOT_CONNECTED - Skills Engine explicitly not linked to UI in this version
       recentTasks
