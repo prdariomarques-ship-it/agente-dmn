@@ -102,3 +102,49 @@ Web build OK.
 - `resumeTask` re-arma o timeout com `timeoutMs - totalRunningTime`; com orçamento quase
   exaurido, a task pode falhar imediatamente após aprovação humana. Mesma raiz do anterior.
 - `registerCustomVerifier` permite sobrescrever verificador registrado (benigno no uso atual).
+
+## 7. Final RC Hardening (2026-09-13, base `6ce2c20` → HEAD `78708e8`)
+
+### Modelo de budget aprovado (semântica implementada em `f60a58b`)
+
+`timeout de execução` e `tempo aguardando humano` são conceitos distintos. O timer de execução
+mede **somente tempo ativo** (observe/think/act/verify). `WAITING_APPROVAL` não consome orçamento.
+Defeitos reproduzidos deterministicamente e corrigidos:
+
+- **D1**: pausa aterrissando dentro de um `act` longo era invisível ao timer armado; o disparo
+  convertia `PAUSED → FAILED("timed out")`, destruindo a janela de aprovação (caminhos OOTA e
+  simples). O timer agora re-sincroniza com o store antes de agir e só falha a task se o store
+  ainda disser `RUNNING` (overrun ativo genuíno — que continua falhando com "timed out").
+- **D2**: disparo do timer sobre `CANCELLED`/`REJECTED` aterrissados no último `await`
+  sobrescrevia o erro auditável. Mesmo guard resolve.
+
+Paths de resume: **Path A** (loop vivo, polling) re-arma com orçamento restante;
+**Path B** (`resumeTask` após saída do loop) concede fatia fresca — semântica pragmática
+documentada; sem retry infinito, pois resume exige `PAUSED` + decisão humana registrada.
+
+### Fronteira de auth mínima (opt-in)
+
+`DARIUS_API_TOKEN` (commit `eacc604`): se definido, todas as rotas `/api` exceto `/api/health`
+exigem `Authorization: Bearer <token>` ou `x-darius-token: <token>` (comparação timing-safe).
+Sem a env, comportamento localhost idêntico ao anterior. **Pendente (decisão arquitetural)**:
+como uma browser UI obtém o token (o cliente web atual não o envia); para LAN/Termux com
+clientes não-browser o mecanismo já é utilizável.
+
+### Contrato no-CoT forçado na fronteira (`200251f`)
+
+`getTaskState` retém outputs de THINK no trace exposto por `/api/tasks/:id` — tanto summaries
+curados (verticais determinísticos) quanto raciocínio cru de agentes LLM. Estrutura do plano
+(estado + timestamp), resultados, evidências, output de ferramenta e verificação permanecem
+visíveis, conforme a seção de superfície da spec do produto.
+
+### Segurança de decisão (aprovadores)
+
+`assertDecidable` (existência + `PAUSED`) cobre: task inexistente, `COMPLETED`, `FAILED`,
+dupla decisão e corrida approve/reject — exatamente uma decisão surte efeito no engine; a
+perdedora recebe 409 e não gera resurrection nem falsa auditoria de transição.
+
+### Totais finais desta operação
+
+152/152 testes (34 arquivos), `tsc --noEmit` 0 erros (backend e web), server smoke 22/22,
+auth smoke 10/10, web build OK. Commits: `f60a58b` (core), `eacc604` (server), `200251f` (api),
+`513e732` (finance tests), `68ea982` (core tests), `78708e8` (web). Manifest: `DARIUS_RELEASE_MANIFEST.md`.
