@@ -17,6 +17,7 @@ import { PluginHost } from "./plugins/host.js";
 import type { RouteRegistrarLike } from "./plugins/contract.js";
 import { createFinancePlugin } from "./plugins/finance/plugin.js";
 import { randomUUID } from "node:crypto";
+import { timingSafeEqual } from "node:crypto";
 import type { Task } from "./core/types.js";
 
 // DARIUS Server is an INTERFACE/ADAPTER layer only:
@@ -53,6 +54,34 @@ app.use(
 );
 
 const PORT = Number(process.env.PORT) || 3000;
+
+// ---- Minimal API auth boundary (opt-in) ----
+// Localhost-only deployments (default BIND_HOST=127.0.0.1) need no token:
+// when DARIUS_API_TOKEN is unset the server behaves exactly as before.
+// For LAN/Termux (BIND_HOST=0.0.0.0) set DARIUS_API_TOKEN; every /api route
+// except the /api/health liveness probe then requires
+//   Authorization: Bearer <token>   (or   x-darius-token: <token>).
+// Clients without an Origin header (curl, mobile apps) pass the token as a
+// header; browser-based UIs need their own token delivery mechanism, which
+// is an architectural decision documented in DARIUS_HARDENING.md (pending).
+const apiToken = process.env.DARIUS_API_TOKEN?.trim() || "";
+if (apiToken) {
+  const expected = Buffer.from(apiToken, "utf8");
+  app.use((req, res, next) => {
+    if (req.path === "/api/health") return next(); // liveness probe stays open
+    const bearer = (req.header("authorization") ?? "").replace(/^Bearer\s+/i, "");
+    const xtoken = req.header("x-darius-token") ?? "";
+    const header = bearer || xtoken;
+    const provided = Buffer.from(header, "utf8");
+    const ok =
+      provided.length === expected.length && timingSafeEqual(provided, expected);
+    if (!ok) {
+      res.status(401).json({ error: "Unauthorized: missing or invalid API token" });
+      return;
+    }
+    next();
+  });
+}
 
 // 1. Instanciar as dependências do DARIUS Core globalmente
 const dbPath = process.env.DB_PATH || "darius_live.db";
