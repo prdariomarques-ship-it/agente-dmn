@@ -3,6 +3,9 @@
 Branch: `feature/darius-finance` · HEAD: `19dc432` (fix(api): no-CoT sentinel proof)
 Gerado em 2026-09-13 pela operação "RELEASE FREEZE / HANDOFF".
 **Nenhuma tag foi criada. Nenhuma operação remota foi executada.**
+Nota de rodada: o estado de CÓDIGO validado é `19dc432`; commits de docs posteriores
+(`4ccd4fc` manifest refresh + esta linha) não alteram código. Candidato final = tip do
+branch `feature/darius-finance` no momento do freeze aprovado pelo usuário.
 
 ## IDENTIDADE DE RELEASE (não confundir)
 - **RC1 HISTÓRICO = `3b791ac`** — permanece intacto, imutável, é o RC1 original.
