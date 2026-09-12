@@ -40,12 +40,12 @@ describe("Live Validation Scenarios", () => {
 
     const task = taskEngine.createTask("HITL Test");
 
-    // Set to PAUSED BEFORE starting the loop!
-    const dbTask = store.getTask(task.id)!;
-    dbTask.status = "PAUSED";
-    store.saveTask(dbTask);
-
-    let p = taskEngine.executeTask(task.id, "worker2"); // executeTask sets it to RUNNING!
+    // NOTE (approval-gate hardening): executeTask no longer accepts a PAUSED
+    // task — only resumeTask() may return a paused task to RUNNING
+    // (Store = authoritative state). The loop-freeze scenario is still fully
+    // exercised: act run #1 self-pauses the task, and t2 below starts PAUSED
+    // through recoverAndResume.
+    let p = taskEngine.executeTask(task.id, "worker2");
 
     const t2 = taskEngine.createTask("HITL Test");
     t2.status = "PAUSED";

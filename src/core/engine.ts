@@ -79,6 +79,23 @@ export class TaskEngine {
     return Array.from(this.agents.values());
   }
 
+  /**
+   * Store = authoritative state.
+   * TaskStore.saveTask replaces the stored object with a copy, so external
+   * pauseForApproval/resumeTask/rejectTask/cancelTask calls mutate a different
+   * object than any locally-held Task reference. Every execution path must
+   * re-read the authoritative status before acting on (or persisting) a local
+   * reference, otherwise terminal/gate states (PAUSED, CANCELLED, FAILED,
+   * COMPLETED) can be silently overwritten. See DARIUS_FINANCE.md.
+   */
+  private syncWithStore(task: Task): void {
+    const authoritative = this.taskStore.getTask(task.id);
+    if (authoritative && authoritative.status !== task.status) {
+      task.status = authoritative.status;
+      if (authoritative.error) task.error = authoritative.error;
+    }
+  }
+
   createTask(objective: string, context?: string, metadata?: Record<string, unknown>): Task {
     const task: Task = {
       id: randomUUID(),
@@ -194,6 +211,9 @@ export class TaskEngine {
     if (task.status === "CANCELLED") throw new Error(`Cannot execute a cancelled task`);
     if (task.status === "COMPLETED") throw new Error(`Cannot execute a completed task`);
     if (task.status === "RUNNING") throw new Error(`Task is already running`);
+    // APPROVAL-GATE FIX: a paused task is waiting for human approval —
+    // only resumeTask() may return it to RUNNING.
+    if (task.status === "PAUSED") throw new Error(`Task is paused awaiting approval; use resumeTask`);
 
     const agent = this.agents.get(agentId);
     if (!agent) throw new Error(`Agent with id ${agentId} not found`);
@@ -252,6 +272,20 @@ export class TaskEngine {
           if (agent.execute && (!agent.observe || !agent.think || !agent.act)) {
              let isDone = false;
              while (!isDone && (execution.iterations < execution.maxIterations)) {
+               // APPROVAL-GATE FIX (bug A): the simple path never checked task
+               // status, so a pause/cancel/reject landing during or between
+               // execute() calls was invisible and the loop kept running the
+               // agent. Respect the authoritative store state every iteration.
+               this.syncWithStore(task);
+               if (task.status === "PAUSED") {
+                 if (execution.state !== "WAITING_APPROVAL") {
+                   this.recordStep(execution, "WAITING_APPROVAL", "Paused waiting for human approval");
+                 }
+                 break; // resumeTask() restarts the loop from the store
+               }
+               if (task.status !== "RUNNING") {
+                 break; // CANCELLED / FAILED / COMPLETED: stop, never resume on our own
+               }
                execution.iterations++;
                const result = await agent.execute(task);
                isDone = await this.completeTaskWithVerification(task, execution, result);
@@ -266,18 +300,10 @@ export class TaskEngine {
 
           let wasPaused = false;
           while (execution.iterations < execution.maxIterations && !isTimeout && (task.status === "RUNNING" || task.status === "PAUSED")) {
-            // APPROVAL-GATE FIX (minimal core patch, see DARIUS_FINANCE.md):
-            // TaskStore.saveTask replaces the stored object with a copy, so
-            // external pauseForApproval/resumeTask/rejectTask/cancelTask calls
-            // mutate a different object than this loop's local `task`. Re-read
-            // the authoritative status every iteration, otherwise the loop
-            // never observes WAITING_APPROVAL and re-runs the agent instead
-            // of parking for human approval.
-            const authoritativeTask = this.taskStore.getTask(task.id);
-            if (authoritativeTask && authoritativeTask.status !== task.status) {
-              task.status = authoritativeTask.status;
-              if (authoritativeTask.error) task.error = authoritativeTask.error;
-            }
+            // APPROVAL-GATE FIX: re-read the authoritative status every
+            // iteration (see syncWithStore) so external gate transitions are
+            // observed instead of re-running the agent.
+            this.syncWithStore(task);
 
             if (task.status === "PAUSED") {
               if (!wasPaused) {
@@ -364,8 +390,12 @@ export class TaskEngine {
                    state: "IDLE",
                    timestamp: new Date()
                 });
-                task.status = "RUNNING"; // Keep it running if it's a retry
-                this.taskStore.saveTask(task);
+                // APPROVAL-GATE FIX (bug B): never persist a locally-forced
+                // RUNNING over a newer store state (PAUSED/CANCELLED/FAILED).
+                this.syncWithStore(task);
+                if (task.status === "RUNNING") {
+                  this.taskStore.saveTask(task);
+                }
                 // Also reset isDone for the loop
                 isDone = false;
               }
@@ -399,6 +429,15 @@ export class TaskEngine {
   }
 
   private async completeTaskWithVerification(task: Task, execution: TaskExecution, result: string): Promise<boolean> {
+    // APPROVAL-GATE FIX (bug B): sync before completing or retrying so no
+    // verification/retry bookkeeping can overwrite a newer store state —
+    // e.g. a pauseForApproval that landed while the agent was working.
+    // WAITING_APPROVAL must never become COMPLETED.
+    this.syncWithStore(task);
+    if (task.status !== "RUNNING") {
+      return true; // Stop the loop; the task keeps its authoritative status.
+    }
+
     if (this.verifier) {
       this.recordStep(execution, "VERIFY");
       const vResult = await this.verifier.verify(task, result);
@@ -411,6 +450,9 @@ export class TaskEngine {
          const currentRetries = (task.metadata?.currentRetries as number) ?? 0;
 
          if (currentRetries < maxRetries) {
+           // Re-sync: the verify() await may have let a gate transition
+           // (pauseForApproval/cancel) land — never persist stale RUNNING.
+           this.syncWithStore(task);
            task.metadata = {
              ...task.metadata,
              currentRetries: currentRetries + 1,
@@ -426,6 +468,14 @@ export class TaskEngine {
       }
     }
 
+    // Re-sync after await points: a pauseForApproval/cancel that landed while
+    // verification was in flight must never be overridden by COMPLETED
+    // (WAITING_APPROVAL must not become COMPLETED).
+    this.syncWithStore(task);
+    if (task.status !== "RUNNING") {
+      return true; // Stop the loop; the task keeps its authoritative status.
+    }
+
     this.recordStep(execution, "DONE");
     task.status = "COMPLETED";
     task.result = result;
@@ -438,6 +488,16 @@ export class TaskEngine {
 
   private failTask(task: Task, execution: TaskExecution, errorMsg: string) {
     this.recordStep(execution, "ERROR", undefined, errorMsg);
+    // Re-sync before failing: a human CANCELLED that landed while the agent
+    // was working is a deliberate terminal decision and outranks an internal
+    // failure. The error is still recorded on the task for auditability.
+    this.syncWithStore(task);
+    if (task.status === "CANCELLED") {
+      task.error = errorMsg;
+      task.updatedAt = new Date();
+      this.taskStore.saveTask(task);
+      return;
+    }
     task.status = "FAILED";
     task.error = errorMsg;
     task.metadata = { ...task.metadata, executionHistory: execution.history };
