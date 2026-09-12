@@ -71,6 +71,10 @@ export class TaskEngine {
     }
   }
 
+  getAgents(): Agent[] {
+    return Array.from(this.agents.values());
+  }
+
   registerAgent(agent: Agent): void {
     this.agents.set(agent.id, agent);
   }

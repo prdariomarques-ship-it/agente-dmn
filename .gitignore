@@ -10,3 +10,5 @@ node_modules/
 dist/
 DARIUS_FORENSIC.md
 web/
+darius_live.db
+DARIUS_PRODUCT_INCUBATION_REPORT.md

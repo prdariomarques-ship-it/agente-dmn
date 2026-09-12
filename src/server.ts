@@ -43,7 +43,7 @@ engine.registerAgent(agent);
 const dummyToolEngine: any = { listTools: () => [] };
 const uiAdapter = new DARIUSUIAdapter(engine, memory, dummyToolEngine, undefined);
 
-// 2. Definir contratos de API
+// 2. Definir contratos de API (completos, sem inventar fake methods no adapter)
 app.get("/api/health", (req, res) => res.json(uiAdapter.getDashboardMetrics().health));
 app.get("/api/dashboard", (req, res) => res.json(uiAdapter.getDashboardMetrics()));
 app.get("/api/tasks", (req, res) => res.json(store.listTasks()));
@@ -55,22 +55,30 @@ app.post("/api/tasks", async (req, res) => {
   engine.executeTask(task.id, agent.id).catch(err => console.error("Background execution error:", err));
   res.json(task);
 });
+
 app.get("/api/tasks/:id", (req, res) => {
   const state = uiAdapter.getTaskState(req.params.id);
   if (!state) return res.status(404).json({ error: "Not found" });
   res.json(state);
 });
-app.get("/api/agents", (req, res) => res.json([]));
+
+app.get("/api/agents", (req, res) => res.json(engine.getAgents()));
+
 app.get("/api/agents/:id", (req, res) => {
-  const detail = {};
-  if (!detail) return res.status(404).json({ error: "Not found" });
-  res.json(detail);
+  // We don't have getAgentDetails natively on UIAdapter in the base code.
+  // We use the TaskEngine's native getter.
+  const agents = engine.getAgents();
+  const agent = agents.find((a: any) => a.id === req.params.id);
+  if (!agent) return res.status(404).json({ error: "Not found" });
+  res.json(agent);
 });
-app.get("/api/memory", async (req, res) => res.json(await {}));
-app.get("/api/skills", (req, res) => res.json([]));
+
+// Marking API GAPs
+app.get("/api/memory", async (req, res) => res.status(501).json({ error: "API GAP - Memory Explorer endpoint not implemented natively on adapter yet." }));
+app.get("/api/skills", (req, res) => res.status(501).json({ error: "API GAP - Skills registry endpoint not implemented natively on adapter yet." }));
+
 app.get("/api/logs", (req, res) => res.json(uiAdapter.getDashboardMetrics().recentActivities || []));
 
-// Prepare stubs for advanced integrations
 app.post("/api/tasks/:id/approve", (req, res) => {
     try {
         engine.resumeTask(req.params.id);
