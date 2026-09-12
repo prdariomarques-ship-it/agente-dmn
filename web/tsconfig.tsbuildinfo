@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/api.ts","./src/main.tsx","./src/components/StateViews.tsx","./src/pages/Agents.tsx","./src/pages/Dashboard.tsx","./src/pages/Finance.tsx","./src/pages/Logs.tsx","./src/pages/Memory.tsx","./src/pages/Skills.tsx","./src/pages/Tasks.tsx"],"version":"5.9.3"}

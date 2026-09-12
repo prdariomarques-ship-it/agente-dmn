@@ -11,4 +11,5 @@ web_export_output.log
 submit.sh
 web_export.sh
 DARIUS_WEB_EXPORT.zip
-web/
+web/node_modules/
+web/dist/
