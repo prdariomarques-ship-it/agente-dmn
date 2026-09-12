@@ -30,6 +30,8 @@ export function StatusBadge({ status }: { status: string }) {
         ? "bg-red-900/40 text-red-300"
         : status === "PAUSED" || status === "WAITING_APPROVAL" || status === "APPROVAL_REQUEST"
           ? "bg-yellow-900/40 text-yellow-200"
-          : "bg-blue-900/40 text-blue-200";
+          : status === "CANCELLED"
+            ? "bg-gray-800 text-gray-300"
+            : "bg-blue-900/40 text-blue-200";
   return <span className={`px-2 py-0.5 rounded text-xs ${color}`}>{status}</span>;
 }
