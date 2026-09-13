@@ -9,6 +9,7 @@ node_modules/
 .signal_state.json
 dist/
 DARIUS_FORENSIC.md
-web/
 darius_live.db
 DARIUS_PRODUCT_INCUBATION_REPORT.md
+web/
+JULES_FINAL_HANDOFF.md
