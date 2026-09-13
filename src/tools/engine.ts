@@ -43,8 +43,41 @@ export class SimpleToolEngine implements ToolEngine {
       throw new Error(`Validation failed for tool '${name}' with params ${JSON.stringify(params)}`);
     }
 
+    // RC2 hardening (B6): a declared positive timeoutMs is enforced as a REAL
+    // per-tool wall-clock budget. Without it, a tool whose promise never
+    // settles (hung socket, forgotten await, deadlock) would wedge the agent
+    // loop forever — the task-level budget eventually fails the task, but the
+    // in-flight execution can never be reclaimed. Invalid values (0, negative,
+    // NaN, non-number) keep the legacy behavior: no per-tool timeout.
+    const timeoutMs = (tool as { timeoutMs?: number }).timeoutMs;
+    const hasTimeout =
+      typeof timeoutMs === "number" && Number.isFinite(timeoutMs) && timeoutMs > 0;
+
     try {
-      return await tool.execute(params, context);
+      if (!hasTimeout) {
+        return await tool.execute(params, context);
+      }
+
+      // The losing promise is explicitly muted: when the timer wins, the tool
+      // promise may still reject much later — that late rejection must never
+      // surface as an unhandled rejection (and its late value is irrelevant).
+      const execution = Promise.resolve(tool.execute(params, context));
+      execution.catch(() => {});
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`Tool '${name}' timed out after ${timeoutMs}ms`)),
+            timeoutMs
+          );
+          // A pending tool timer must never, by itself, keep the process alive.
+          (timer as { unref?: () => void }).unref?.();
+        });
+        return await Promise.race([execution, timeoutPromise]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     } catch (error) {
       throw new Error(`Error executing tool '${name}': ${error instanceof Error ? error.message : String(error)}`);
     }
