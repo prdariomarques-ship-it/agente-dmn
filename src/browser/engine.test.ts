@@ -36,6 +36,9 @@ describe("SafeBrowserEngine", () => {
       "http://169.254.0.1/x",          // link-local /8 range
       "http://2130706433/x",           // decimal IPv4 → canonical 127.0.0.1
       "http://[::ffff:127.0.0.1]/x",   // IPv4-mapped IPv6 (canonical hex form)
+      "http://100.64.0.1/x",           // CGNAT RFC6598 lower edge
+      "http://100.100.100.100/x",      // CGNAT (Tailscale-style)
+      "http://100.127.255.254/x",      // CGNAT upper edge
     ];
     for (const url of blocked) {
       await expect(browser.execute("navigate", { url }, "t1"), url)
@@ -46,6 +49,12 @@ describe("SafeBrowserEngine", () => {
   it("should still allow public domains after hardening", async () => {
     const res = await browser.execute("navigate", { url: "https://example.com/deep" }, "t1");
     expect(res).toBe("Navigated to https://example.com/deep");
+  });
+
+  it("should not over-block public ranges that merely look internal-adjacent (CGNAT boundary)", async () => {
+    // 100.x outside the RFC6598 CGNAT range (100.64.0.0/10) is routable public space.
+    const res = await browser.execute("navigate", { url: "http://100.43.0.1/x" }, "t1");
+    expect(res).toBe("Navigated to http://100.43.0.1/x");
   });
 
   it("should perform other actions", async () => {
