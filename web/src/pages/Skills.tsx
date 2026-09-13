@@ -16,7 +16,7 @@ export default function Skills() {
   if (!skills) return <Loading label="Loading skills..." />;
   if (skills.length === 0) {
     return (
-      <Empty label="No skills exposed by the server yet (Skills Engine is not connected to this endpoint in RC1)." />
+      <Empty label="No skills exposed by the server yet (Skills Engine is not connected to this endpoint in RC2)." />
     );
   }
 
