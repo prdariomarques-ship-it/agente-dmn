@@ -95,6 +95,53 @@ describe("RC2 hardening: cancellation observability", () => {
   });
 });
 
+describe("RC2 hardening: cancel state matrix (FINAL GATE §6)", () => {
+  it("cancels PENDING, RUNNING, PAUSED and waiting-approval tasks, each emitting exactly one TASK_CANCELLED", () => {
+    const engine = new TaskEngine(new InMemoryTaskStore());
+    const events: Array<{ type: string; taskId: string }> = [];
+    engine.subscribe({ onEvent: (e) => events.push({ type: e.type, taskId: e.taskId }) });
+
+    // queued (PENDING / QUEUED)
+    const queued = engine.createTask("cancel while queued");
+    expect(engine.cancelTask(queued.id).status).toBe("CANCELLED");
+
+    // running
+    const running = engine.createTask("cancel while running");
+    running.status = "RUNNING";
+    expect(engine.cancelTask(running.id).status).toBe("CANCELLED");
+
+    // paused
+    const paused = engine.createTask("cancel while paused");
+    paused.status = "PAUSED";
+    expect(engine.cancelTask(paused.id).status).toBe("CANCELLED");
+
+    // waiting approval (approval gate parks the task in PAUSED)
+    const waiting = engine.createTask("cancel while waiting approval");
+    waiting.status = "PAUSED";
+    engine.pauseForApproval(waiting.id);
+    expect(engine.cancelTask(waiting.id).status).toBe("CANCELLED");
+
+    const cancels = events.filter((e) => e.type === "TASK_CANCELLED");
+    expect(cancels.map((c) => c.taskId).sort()).toEqual(
+      [queued.id, running.id, paused.id, waiting.id].sort()
+    );
+  });
+
+  it("double cancel throws on the second call and emits NO additional TASK_CANCELLED", () => {
+    const engine = new TaskEngine(new InMemoryTaskStore());
+    const events: Array<{ type: string }> = [];
+    engine.subscribe({ onEvent: (e) => events.push({ type: e.type }) });
+
+    const task = engine.createTask("cancel me once");
+    engine.cancelTask(task.id);
+    expect(engine.getTask(task.id)!.status).toBe("CANCELLED");
+
+    expect(() => engine.cancelTask(task.id)).toThrow(/already finished/);
+
+    expect(events.filter((e) => e.type === "TASK_CANCELLED")).toHaveLength(1);
+  });
+});
+
 describe("RC2 hardening: unknown-id contract for the approval API", () => {
   it("pauseForApproval/resumeTask/rejectTask throw for unknown ids", () => {
     const engine = new TaskEngine(new InMemoryTaskStore());

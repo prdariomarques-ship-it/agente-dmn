@@ -541,7 +541,12 @@ export class TaskEngine {
   cancelTask(taskId: string): Task {
     const task = this.taskStore.getTask(taskId);
     if (!task) throw new Error(`Task with id ${taskId} not found`);
-    if (task.status === "COMPLETED" || task.status === "FAILED") throw new Error(`Cannot cancel a task that has already finished`);
+    // FINAL GATE cancel matrix: CANCELLED is a terminal state. Re-cancelling
+    // used to be a silent no-op that re-emitted TASK_CANCELLED, so observers
+    // (UI logs, telemetry, finance audit) could see a task "cancelled" twice.
+    // It now fails loudly, exactly like COMPLETED/FAILED.
+    if (task.status === "COMPLETED" || task.status === "FAILED" || task.status === "CANCELLED")
+      throw new Error(`Cannot cancel a task that has already finished`);
 
     task.status = "CANCELLED";
     task.updatedAt = new Date();
