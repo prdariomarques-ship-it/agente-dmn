@@ -27,8 +27,23 @@ describe("isLoopbackBind (pure classifier)", () => {
 function boot(env: Record<string, string>, port: string): Promise<{ code: number | null; output: string }> {
   return new Promise((resolve, reject) => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "darius-bindboot-"));
-    const child = spawn("npx", ["tsx", "src/server.ts"], {
+    // Spawn node directly on the tsx CLI entry: `child` IS the server process
+    // (no npx→tsx→node chain). Earlier versions spawned `npx tsx`, so killing
+    // the child killed only the npx wrapper and the real server survived as an
+    // orphan holding the port — the next suite run then failed with
+    // EADDRINUSE. With a direct spawn, child.kill() always reaches the
+    // listener, on every OS.
+    // Resolve the tsx CLI entry from its package manifest (the package's
+    // `exports` map deliberately does not expose ./dist/*, so resolve via the
+    // `bin` field instead of require.resolve).
+    const tsxPkgDir = path.join(process.cwd(), "node_modules", "tsx");
+    const tsxPkg = JSON.parse(fs.readFileSync(path.join(tsxPkgDir, "package.json"), "utf8")) as { bin?: string | Record<string, string> };
+    const tsxBin = typeof tsxPkg.bin === "string" ? tsxPkg.bin : tsxPkg.bin?.tsx;
+    if (!tsxBin) throw new Error("tsx package manifest has no bin entry");
+    const tsxCli = path.join(tsxPkgDir, tsxBin);
+    const child = spawn(process.execPath, [tsxCli, "src/server.ts"], {
       cwd: process.cwd(),
+      detached: process.platform !== "win32", // POSIX: child leads its own process group
       env: {
         ...process.env,
         PORT: port,
@@ -38,6 +53,25 @@ function boot(env: Record<string, string>, port: string): Promise<{ code: number
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    // Tree kill: the tsx CLI spawns an inner node process for the actual
+    // server, so killing only `child` orphans the listener holding the port.
+    // POSIX: signal the whole process group. Windows: taskkill tree.
+    const killTree = () => {
+      if (child.exitCode !== null && child.signalCode !== null) return;
+      if (process.platform === "win32") {
+        try {
+          spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+        } catch {
+          /* fall through to child.kill below */
+        }
+        try { child.kill("SIGKILL"); } catch { /* already dead */ }
+      } else {
+        try { process.kill(-child.pid!, "SIGKILL"); } // negative pid = process group
+        catch {
+          try { child.kill("SIGKILL"); } catch { /* already dead */ }
+        }
+      }
+    };
     let output = "";
     let settled = false;
     const finish = async (kill: boolean, result: { code: number | null; output: string } | Error) => {
@@ -47,8 +81,9 @@ function boot(env: Record<string, string>, port: string): Promise<{ code: number
       child.stdout.removeAllListeners("data");
       child.stderr.removeAllListeners("data");
       if (kill && child.exitCode === null) {
-        child.kill("SIGKILL");
-        await new Promise<void>((r) => child.once("exit", () => r())); // port freed
+        killTree();
+        await new Promise<void>((r) => child.once("exit", () => r()));
+        await new Promise<void>((r) => setTimeout(r, 50)); // port release settle
       }
       result instanceof Error ? reject(result) : resolve(result);
     };
