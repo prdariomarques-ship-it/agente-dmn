@@ -7,3 +7,9 @@ __pycache__/
 logs/
 node_modules/
 .signal_state.json
+dist/
+DARIUS_FORENSIC.md
+darius_live.db
+DARIUS_PRODUCT_INCUBATION_REPORT.md
+web/
+JULES_FINAL_HANDOFF.md
